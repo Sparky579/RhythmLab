@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '36';
+  const BUILD = '37';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -61,6 +61,7 @@
 
   const audio = new MG.AudioEngine();
   const game = new MG.Game($('game'), audio);
+  MG.game = game;   // 供自动化测试驱动真实路径
   // 原生壳（安卓 App）通过它把 MotionEvent 直接喂进来
   MG.nativeTouch = (type, id, x, age) => game.nativeTouch(type, id, x, age);
   let chart = null;
@@ -75,32 +76,17 @@
     try { const r = fn.call(document); if (r && r.catch) r.catch(() => {}); } catch (e) { /* ignore */ }
   }
 
-  function lockScroll(on) {
-    // 根元素也要加：touch-action 只写在子树上，根滚动器那层仍然会为了
-    // 判断缩放/双击而接管多指触摸，接管的表现就是 touchcancel。
-    const root = document.documentElement;
-    if (on) {
-      scrollSave = window.scrollY || 0;
-      document.body.classList.add('playing'); root.classList.add('playing');
-    } else {
-      document.body.classList.remove('playing'); root.classList.remove('playing');
-      window.scrollTo(0, scrollSave);
-    }
+  /* 有弹层时必须放开 touch-action：#play 上的 none 会顺着祖先链
+     把结束页的上下滑也一并挡掉，手机上就变成整页锁死滚不动。 */
+  function syncOverlayScroll() {
+    const open = !$('resultOverlay').classList.contains('hidden')
+      || !$('pauseOverlay').classList.contains('hidden');
+    $('play').classList.toggle('overlay-open', open);
   }
 
-  /* 桌面模式（请求桌面版网站）下 Chrome 会无视 user-scalable=no，
-     页面变成可缩放，多指触摸就会被缩放手势检测接管并作废。
-     UA 自称桌面、却带着多点触摸，就是这种情况。 */
-  function desktopModeOn() {
-    if (!/Macintosh|Windows NT|X11/.test(navigator.userAgent)) return false;
-    if (/Mobile|Android/.test(navigator.userAgent)) return false;
-    if (!(navigator.maxTouchPoints > 0)) return false;
-    // 触屏笔记本也是「桌面 UA + 有触点」，但它还接着鼠标；
-    // 手机开桌面模式则只有粗指针，用这个把两者分开。
-    try {
-      if (window.matchMedia('(any-pointer: fine)').matches) return false;
-    } catch (e) { /* 不支持就按命中处理 */ }
-    return true;
+  function lockScroll(on) {
+    if (on) { scrollSave = window.scrollY || 0; document.body.classList.add('playing'); }
+    else { document.body.classList.remove('playing'); window.scrollTo(0, scrollSave); }
   }
 
   /* ---------- 预设卡片 ---------- */
@@ -383,6 +369,7 @@
     }
     $('resultOverlay').classList.add('hidden');
     $('pauseOverlay').classList.add('hidden');
+    syncOverlayScroll();
     game.load(chart);
     game.resize();
     game.start();
@@ -398,6 +385,7 @@
   function showResult(res) {
     exitFullscreen();          // 一局打完就退出全屏，方便看结果和改设置
     $('resultOverlay').classList.remove('hidden');
+    syncOverlayScroll();
     $('resTitle').textContent = res.chart.challenge
       ? `${res.chart.presetName} · ${res.chart.keys}K · ${res.chart.bpmStart} → ${res.chart.bpmEnd} BPM`
       : `${res.chart.presetName} · ${res.chart.keys}K · ${res.chart.bpm} BPM`;
@@ -440,87 +428,38 @@
     const hits = res.counts[0] + res.counts[1];
     let line = `<br>击打输入 <b>${res.taps}</b> 次 · 命中 ${hits} · 打空 ${res.emptyTaps}`;
     if (res.assistHits) line += ` · 边缘容错救回 ${res.assistHits}`;
-    if (res.stateDrops) line += ` · 暂停期丢弃 ${res.stateDrops}`;
-    const warn = [];
-    if (res.blackouts && res.blackouts.length) {
-      const b = res.blackouts;
-      const total = Math.round(b.reduce((a, x) => a + x.ms, 0) / 100) / 10;
-      warn.push(`检测到 ${b.length} 段连续打空（共 ${total} 秒、${b.reduce((a, x) => a + x.taps, 0)} 次触摸没打中任何音符），`
-        + `最长一段 ${(Math.max.apply(null, b.map((x) => x.ms)) / 1000).toFixed(1)} 秒`);
+    // 断触是玩家必须知道的，但一句话就够；其余排查指标收进「输入诊断」
+    const gaps = res.rawGaps || [];
+    if (gaps.length) {
+      const total = (gaps.reduce((a, x) => a + x[1], 0) / 1000).toFixed(1);
+      const worst = Math.max.apply(null, gaps.map((x) => x[1]));
+      line += `<br><span style="color:#ffb86b">本局有 ${gaps.length} 段收不到触摸，`
+        + `共 ${total} 秒（最长 ${worst}ms）</span>`;
     }
-    // 原始事件空档：浏览器有没有连续一段时间不派发触摸事件。
-    // 这一项最关键——它能把「事件没来」和「事件来了但判定/渲染出问题」彻底分开。
-    if (res.rawGaps && res.rawGaps.length) {
-      const worst = Math.max.apply(null, res.rawGaps.map((x) => x[1]));
-      warn.push(`浏览器有 ${res.rawGaps.length} 段完全没有派发任何触摸事件（最长 ${worst}ms）。`
-        + `这期间页面本身在正常跑，是事件根本没送进来`);
-    }
-    if (res.raw) {
-      const r = res.raw;
-      warn.push(`原始事件计数 按下${r.ts} 移动${r.tm} 抬起${r.te} 取消${r.tc}`
-        + (r.tc > 0 ? '（有 touchcancel：系统或浏览器中途接管了手势）' : '')
-        + (r.skipped > 0 ? ` 被过滤${r.skipped}` : ''));
-    }
-    if (desktopModeOn()) {
-      warn.push('浏览器开着「请求桌面版网站」：此时 user-scalable=no 会被无视，'
-        + '页面变成可缩放，多指触摸就会被缩放手势检测接管并作废。请先关掉它再测。');
-    }
-    const cancelGaps = (res.rawGaps || []).filter((x) => x[2] === 'tc').length;
-    if (cancelGaps) {
-      const spots = res.cancelSpots || [];
-      const edge = spots.filter((x) => x <= 40).length;
-      warn.push(`有 ${cancelGaps} 段断流紧跟在 touchcancel 之后 —— 是系统抢走了这串触摸。`
-        + (spots.length
-          ? (res.vvScaleMax > 1.01 || res.vvEvents > 2
-            ? `期间浏览器在做双指缩放（缩放到 ${(res.vvScaleMax || 1).toFixed(2)}）。`
-              + `到 Chrome 设置→辅助功能，关掉「强制启用缩放」。`
-            : edge >= spots.length / 2
-            ? `被取消的手指多数贴在屏幕边缘（${edge}/${spots.length} 次在 40px 内），是返回/导航手势。`
-              + `改用三键导航即可根除。`
-            : `被取消的手指不在边缘，是系统的多指手势被触发（三指/四指截屏一类）。`)
-          : ''));
-    }
-    if (res.inputGaps && res.inputGaps.length) {
-      const worst = Math.max.apply(null, res.inputGaps.map((x) => x.ms));
-      warn.push(`有 ${res.inputGaps.length} 段完全收不到输入（最长 ${worst}ms）`
-        + (res.stalls && res.stalls.length ? '，同期有画面卡顿，多半是性能问题'
-          : '，同期画面没有卡顿，说明触摸是在页面之外被丢掉的'));
-    }
-    if (res.presentStalls && res.presentStalls.length) {
-      const worst = Math.max.apply(null, res.presentStalls.map((x) => x[1]));
-      warn.push(`画面送显滞后 ${res.presentStalls.length} 次，最长 ${worst}ms`
-        + `（JS 在正常跑但帧没能按时上屏，属于显示层问题，可试着关掉「低延迟画布」或降低渲染分辨率）`);
-    }
-    if (res.stalls && res.stalls.length) {
-      const worst = Math.max.apply(null, res.stalls.map((x) => x[1]));
-      // 把卡顿归因说清楚：是我的代码慢，还是浏览器/系统在我代码之外卡住
-      const inMine = res.maxFrameDur || 0, outside = res.maxOutside || 0;
-      const blame = outside > inMine * 2
-        ? `其中最长 ${outside}ms 花在本程序代码之外（GC / 浏览器 / 系统），不是渲染或判定慢`
-        : `本程序单帧最长 ${inMine}ms`;
-      const s0 = res.stalls[res.stalls.length - 1] || [];
-      const h = res.frameHist || [0, 0, 0, 0, 0];
-      const runTxt = res.worstRunMs >= 400
-        ? `连续掉帧最长 ${(res.worstRunMs / 1000).toFixed(1)} 秒（${res.worstRunFrames} 帧接连变慢，不是某一帧卡住）。`
-        : '';
-      warn.push(`本局画面卡顿 ${res.stalls.length} 次，最长一帧 ${worst}ms。${runTxt}${blame}。`
-        + `帧分布 顺畅${h[0]} / 略慢${h[1]} / 卡${h[2] + h[3] + h[4]}。`
-        + `最近一次拆分：绘制 ${s0[5] || 0}ms / 音频 ${s0[3] || 0}ms / 逻辑 ${s0[4] || 0}ms`
-        + `（视口变化 ${res.resizeCount} 次 / 画布重建 ${res.canvasAllocs} 次）`
-        + `（卡顿期间安卓会直接丢掉排队的触摸，这就是「一段完全点不上、面板数字也不动」的来源）`);
-    }
-    if (res.taps < hits) warn.push('输入次数少于命中数：有触摸事件没送到页面');
-    if (res.tsAnomalies) {
-      warn.push(`检测到 ${res.tsAnomalies} 次事件时间戳基准异常，已自动改用系统时钟`);
-    }
-    const missRate = res.total ? res.counts[2] / res.total : 0;
-    if (missRate > 0.25 && res.emptyTaps > hits * 0.3) {
-      warn.push('打空比例偏高：多半是落点压在轨道边线上，可把「触摸边缘容错」打开或换 4K');
-    }
-    if (warn.length) line += '<br><span style="color:#ffb86b">' + warn.join('；') + '</span>';
+    if (state.game.inputDebug) line += diagLines(res);
     return line;
   }
 
+  /* 排查用的详细指标，只在打开「输入诊断」时出现 */
+  function diagLines(res) {
+    const out = [];
+    const r = res.raw || {};
+    out.push(`原始事件 按下${r.ts || 0} 移动${r.tm || 0} 抬起${r.te || 0} 取消${r.tc || 0}`
+      + ` 被过滤${r.skipped || 0}`);
+    if ((res.rawGaps || []).length) {
+      out.push('断流前因 ' + res.rawGaps.map((x) =>
+        `${x[1]}ms(${RAW_NAME[x[2]] || '?'}后,${x[3] === undefined ? '?' : x[3]}指)`).join(' '));
+    }
+    if ((res.cancelSpots || []).length) out.push('取消离边缘 ' + res.cancelSpots.join('/') + 'px');
+    if ((res.stalls || []).length) {
+      out.push(`卡顿${res.stalls.length}次 最长${res.maxGap}ms`
+        + `（我的代码${res.maxFrameDur}ms / 之外${res.maxOutside}ms）`
+        + ` 连续掉帧${(res.worstRunMs / 1000).toFixed(1)}s`);
+    }
+    if (res.tsAnomalies) out.push(`时间戳异常 ${res.tsAnomalies} 次`);
+    out.push(`视口${res.resizeCount}次 画布重建${res.canvasAllocs}次 dpr${res.dpr}`);
+    return '<br><span style="color:var(--muted);font-size:11.5px">' + out.join('<br>') + '</span>';
+  }
   /* 挑战摘要：准确率跌破阈值前守住的最高 BPM，一眼看出在哪一档崩 */
   function challengeLine(res) {
     const segs = res.segments;
@@ -559,16 +498,6 @@
   /* 把本局所有诊断数字拼成一段纯文本，方便直接发出来，不用人工抄 */
   const RAW_NAME = { ts: '按下', tm: '移动', te: '抬起', tc: '取消', pd: '指针' };
 
-  function warnDesktopMode() {
-    const el = $('uaWarn');
-    if (!el || !desktopModeOn()) return;
-    el.classList.remove('hidden');
-    el.innerHTML = '<b>检测到「请求桌面版网站」已开启。</b>'
-      + '这会让浏览器无视页面的禁止缩放，把多指触摸当成缩放手势接管并作废，'
-      + '表现就是四指连点时整段收不到触摸、却什么都不弹出来。'
-      + '请在浏览器菜单里取消勾选「桌面版网站」，或改用安卓 App。';
-  }
-
   function diagText(res) {
     const c = res.chart, r = res.raw || {};
     const h = res.frameHist || [];
@@ -593,7 +522,6 @@
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
       `送显滞后 ${(res.presentStalls || []).length}次 最长${res.maxRafLag}ms`,
       `视口 ${res.resizeCount}次 画布重建${res.canvasAllocs}次 时钟偏移${res.clockDelta === null ? '-' : Math.round(res.clockDelta)}ms 时间戳异常${res.tsAnomalies}`,
-      `桌面模式 ${desktopModeOn() ? '开（会接管多指触摸）' : '关'}  触点上限 ${navigator.maxTouchPoints}`,
       `环境 ${navigator.userAgent}`,
     ].join('\n');
   }
@@ -643,7 +571,6 @@
 
   /* ---------- 绑定 ---------- */
   function initControls() {
-    warnDesktopMode();
     document.querySelectorAll('#groupTabs .tab').forEach(t => t.addEventListener('click', () => {
       state.group = t.dataset.group;
       const inGroup = state.group === 'chaos'
@@ -760,23 +687,6 @@
       });
     }
 
-    /* 只有原生壳里才有这个开关：给 ROM 的多指手势检测做 A/B 用。
-       壳里但桥没注入上时，把开关显出来并置灰，免得静悄悄什么都不出现。 */
-    const inShell = /RhythmLabShell/.test(navigator.userAgent);
-    const bridge = !!(window.RLShell && window.RLShell.setSecure);
-    if (bridge || inShell) {
-      $('secureWrap').classList.remove('hidden');
-      const cb = $('blockGestures');
-      if (!bridge) {
-        cb.disabled = true;
-        $('secureWrap').querySelector('.hint').textContent = '当前 APK 不支持这个开关，请重新下载安装。';
-      } else {
-        cb.checked = !!state.game.blockGestures;
-        const apply = () => { try { RLShell.setSecure(cb.checked); } catch (e) { /* ignore */ } };
-        cb.onchange = () => { state.game.blockGestures = cb.checked; apply(); saveState(); };
-        apply();
-      }
-    }
     for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoCalibrate', 'autoFullscreen', 'minimalFx', 'inputDebug']) {
       if (!$(id)) continue;
       $(id).checked = !!state.game[id];
@@ -825,7 +735,9 @@
     $('btnFullscreen').addEventListener('click', toggleFullscreen);
     $('btnPause').addEventListener('click', () => game.togglePause());
     $('btnResume').addEventListener('click', () => game.resume());
-    $('btnRestart').addEventListener('click', () => { $('pauseOverlay').classList.add('hidden'); game.stop(); startGame(); });
+    $('btnRestart').addEventListener('click', () => {
+      $('pauseOverlay').classList.add('hidden'); syncOverlayScroll(); game.stop(); startGame();
+    });
     $('btnQuit').addEventListener('click', backToSetup);
     $('btnAgain').addEventListener('click', () => startGame());
     $('btnNewSeed').addEventListener('click', () => {
@@ -838,6 +750,7 @@
     game.onFinish = showResult;
     game.onPauseChange = (paused) => {
       $('pauseOverlay').classList.toggle('hidden', !paused);
+      syncOverlayScroll();
       if (paused) exitFullscreen();     // 暂停也算「不在打」
     };
     window.addEventListener('resize', () => {

@@ -26,10 +26,7 @@ html, body {
   overscroll-behavior: none;
 }
 body { min-height: 100vh; }
-/* 游戏中锁住页面：避免手机地址栏收放导致视口变化、判定线跳动。
-   touch-action 要一路铺到根元素：只写在 #play 上的话，根滚动器那一层
-   仍然armed，浏览器照样会为了判断缩放/双击而接管多指触摸并发 touchcancel。 */
-html.playing, body.playing { touch-action: none; }
+/* 游戏中锁住页面：避免手机地址栏收放导致视口变化、判定线跳动 */
 body.playing { position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden; }
 button, input, select { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; font-weight: 700; }
@@ -137,22 +134,6 @@ details.adv summary { cursor: pointer; color: var(--muted); font-size: 13px; mar
 }
 .challenge-box .hint { color: var(--accent2); }
 
-.ua-warn {
-  margin: 0 0 14px; padding: 12px 14px;
-  background: rgba(255, 92, 122, 0.12);
-  border: 1px solid rgba(255, 92, 122, 0.45);
-  border-radius: 12px; color: #ffb0c0; font-size: 13px; line-height: 1.6;
-}
-
-.gesture-box {
-  margin: 0 0 14px; padding: 10px 12px 4px;
-  background: rgba(255, 184, 107, 0.08);
-  border: 1px solid rgba(255, 184, 107, 0.35);
-  border-radius: 12px;
-}
-.gesture-box .check { margin-bottom: 2px; }
-.gesture-box .hint { color: #ffb86b; }
-
 .start-block {
   margin-top: 16px; padding-top: 14px;
   border-top: 1px solid var(--panel-border);
@@ -192,16 +173,25 @@ a.ghost {
   position: fixed; inset: 0; background: var(--bg); overflow: hidden;
   touch-action: none; -webkit-user-select: none; user-select: none; -webkit-touch-callout: none;
 }
+/* 结束页/暂停页出现时放开手势，否则上面那条 none 会连带挡住弹层的上下滑 */
+#play.overlay-open { touch-action: auto; }
 #game { position: absolute; inset: 0; width: 100%; height: 100%; display: block; touch-action: none; }
 .pause-btn {
   position: absolute; top: max(10px, env(safe-area-inset-top)); left: 50%; transform: translateX(-50%);
   border: 1px solid var(--panel-border); background: rgba(255,255,255,0.08); color: var(--text);
   border-radius: 999px; width: 40px; height: 28px; font-size: 11px; cursor: pointer; z-index: 5;
 }
+/* 结束页会比屏幕高，必须能上下滑。#play 上是 touch-action:none，
+   这里要显式放开纵向拖动，否则在手机上整页锁死、根本滚不动。 */
 .overlay {
-  position: absolute; inset: 0; display: flex; align-items: center; justify-content: center;
-  background: rgba(5, 6, 12, 0.7); backdrop-filter: blur(6px); z-index: 10; padding: 16px;
+  position: absolute; inset: 0; display: flex; align-items: flex-start; justify-content: center;
+  background: rgba(5, 6, 12, 0.7); backdrop-filter: blur(6px); z-index: 10;
+  padding: 16px; padding-top: max(16px, env(safe-area-inset-top));
+  padding-bottom: max(16px, env(safe-area-inset-bottom));
+  overflow-y: auto; -webkit-overflow-scrolling: touch;
+  touch-action: pan-y; overscroll-behavior: contain;
 }
+.overlay > .card { margin: auto; }
 .card {
   width: min(360px, 100%); background: var(--bg2); border: 1px solid var(--panel-border); border-radius: 18px;
   padding: 22px; display: flex; flex-direction: column; gap: 10px; text-align: center;
