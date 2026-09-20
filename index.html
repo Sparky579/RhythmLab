@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="css/style.css?v=17" />
+  <link rel="stylesheet" href="css/style.css?v=18" />
 </head>
 <body>
   <!-- 设置页 -->
@@ -183,13 +183,10 @@
               留白区内点击仍然算最外侧轨，只是不摆音符。</p>
           </div>
           <div class="field">
-            <label>相邻轨容错</label>
-            <select id="touchAssist">
-              <option value="0">关闭 · 只认按到的那一轨</option>
-              <option value="1">保守 · 仅落点压在轨道边线时</option>
-              <option value="2" selected>宽松 · 本轨没音符时看相邻轨</option>
-            </select>
-            <p class="hint">只有本轨在判定窗口内确实没有音符可打时才会去看相邻轨，不会抢走本该打中的音符。</p>
+            <label>轨道判定余量 <output id="laneSlackPxOut">12 px</output></label>
+            <input type="range" id="laneSlackPx" min="0" max="30" step="2" value="12" />
+            <p class="hint">落点越过轨道边线这么多像素内仍算这一轨，而且只在本轨确实没音符可打时才生效。
+              设 0 就是严格只认按到的那一轨。</p>
           </div>
           <div class="field">
             <label>判定偏移 <output id="offsetOut">0 ms</output></label>
@@ -205,7 +202,7 @@
             <label class="check"><input type="checkbox" id="hitSound" checked /> 打击音</label>
             <label class="check"><input type="checkbox" id="handColors" checked /> 左右手颜色区分</label>
             <label class="check"><input type="checkbox" id="showErrorBar" checked /> 误差条</label>
-            <label class="check"><input type="checkbox" id="autoCalibrate" checked /> 每局自动套用判定偏移</label>
+            <label class="check"><input type="checkbox" id="autoCalibrate" /> 每局自动套用判定偏移</label>
             <label class="check"><input type="checkbox" id="autoFullscreen" checked /> 开始时自动全屏</label>
             <label class="check"><input type="checkbox" id="inputDebug" /> 输入诊断（排查断触）</label>
             <label class="check"><input type="checkbox" id="missOnEmpty" /> 空打判 Miss（断连）</label>
@@ -256,12 +253,12 @@
     </div>
   </div>
 
-  <script src="js/rng.js?v=17"></script>
-  <script src="js/generator.js?v=17"></script>
-  <script src="js/bgm.js?v=17"></script>
-  <script src="js/audio.js?v=17"></script>
-  <script src="js/game.js?v=17"></script>
-  <script src="js/ui.js?v=17"></script>
+  <script src="js/rng.js?v=18"></script>
+  <script src="js/generator.js?v=18"></script>
+  <script src="js/bgm.js?v=18"></script>
+  <script src="js/audio.js?v=18"></script>
+  <script src="js/game.js?v=18"></script>
+  <script src="js/ui.js?v=18"></script>
   <script>
   /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
   if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
@@ -274,7 +271,7 @@
   /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
      不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
   (function () {
-    var WANT = '17';
+    var WANT = '18';
     var MG = window.MG || {};
     var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
     if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }

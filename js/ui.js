@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '17';
+  const BUILD = '18';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -25,7 +25,7 @@
     axisStyle: 'tri',
     mixedPool: G.FANCY_KEYS.slice(),
     fancyRatio: 0.35,
-    game: Object.assign({}, MG.GAME_DEFAULTS),  // 含 touchAssist / autoCalibrate 等
+    game: Object.assign({}, MG.GAME_DEFAULTS),
   };
 
   function loadState() {
@@ -432,8 +432,7 @@
     if (res.autoplay || res.suggestOffset === null || res.suggestOffset === undefined) return '';
     const cur = state.game.offsetMs, want = res.suggestOffset, delta = want - cur;
     if (Math.abs(delta) < 8) return '<br>判定偏移已经对准，无需调整。';
-    const applied = state.game.autoCalibrate;
-    if (applied) {
+    if (state.game.autoCalibrate) {
       state.game.offsetMs = want;
       Object.assign(game.settings, state.game);
       const el = $('offsetMs');
@@ -441,8 +440,8 @@
       saveState();
       return `<br><span style="color:#5ee8b0">判定偏移已自动从 ${cur} 调到 ${want} ms（你平均偏${delta > 0 ? '早' : '晚'} ${Math.abs(delta)}ms）</span>`;
     }
-    return `<br>你平均偏${delta > 0 ? '早' : '晚'} ${Math.abs(delta)}ms，`
-      + `<button type="button" id="btnCalib" class="link">把判定偏移调到 ${want} ms</button>`;
+    return `<br>本局平均偏${delta > 0 ? '早' : '晚'} ${Math.abs(delta)}ms，`
+      + `<button type="button" id="btnCalib" class="link">要的话点这里把判定偏移调到 ${want} ms</button>`;
   }
 
   function drawResultChart(res) {
@@ -529,6 +528,7 @@
     bindRange('offsetMs', 'offsetOut', 'offsetMs', v => (v > 0 ? '+' : '') + v + ' ms', 'game');
     bindRange('volume', 'volumeOut', 'volume', v => Math.round(v * 100) + '%', 'game');
     bindRange('edgeMargin', 'edgeMarginOut', 'edgeMargin', v => v + ' px', 'game');
+    bindRange('laneSlackPx', 'laneSlackPxOut', 'laneSlackPx', v => v + ' px', 'game');
     bindRange('bgmVolume', 'bgmVolumeOut', 'bgmVolume', v => Math.round(v * 100) + '%', 'game');
 
     const bpm = $('bpm'), bpmNum = $('bpmNum');
@@ -572,16 +572,6 @@
     $('seed').value = state.seed;
     $('seed').addEventListener('input', (e) => { state.seed = e.target.value || 'demo'; refresh(); });
     $('btnSeed').addEventListener('click', () => { state.seed = randomSeed(); $('seed').value = state.seed; refresh(); });
-
-    const ta = $('touchAssist');
-    if (ta) {
-      ta.value = String(state.game.touchAssist);
-      ta.addEventListener('change', (e) => {
-        state.game.touchAssist = +e.target.value;
-        Object.assign(game.settings, state.game);
-        saveState();
-      });
-    }
 
     bindSeg('keys', v => { state.keys = +v; syncSubopts(); refresh(); });
     bindSeg('axisHand', v => { state.axisHand = v; refresh(); });
