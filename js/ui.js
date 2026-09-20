@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '37';
+  const BUILD = '38';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -522,6 +522,13 @@
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
       `送显滞后 ${(res.presentStalls || []).length}次 最长${res.maxRafLag}ms`,
       `视口 ${res.resizeCount}次 画布重建${res.canvasAllocs}次 时钟偏移${res.clockDelta === null ? '-' : Math.round(res.clockDelta)}ms 时间戳异常${res.tsAnomalies}`,
+      `轨道 宽${Math.round(MG.game.laneW)}px 起点${Math.round(MG.game.laneX0)}px`
+        + ` 手势区${MG.game.edgeGestureCss >= 0 ? MG.game.edgeGestureCss + 'px' : '未知'}`,
+      `原生壳 ${window.__shell
+        ? `手势排除${__shell.ok ? '已生效 ' + __shell.band : '失败(' + __shell.band + ')'}`
+          + ` 系统手势区 左${__shell.gl}/右${__shell.gr}/下${__shell.gb}px(设备像素)`
+          + ` 密度${__shell.dpr}`
+        : '未启用'}`,
       `环境 ${navigator.userAgent}`,
     ].join('\n');
   }

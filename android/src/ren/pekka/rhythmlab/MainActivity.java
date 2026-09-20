@@ -43,6 +43,8 @@ public class MainActivity extends Activity {
     private static final float MOVE_EPS_DP = 6f;
 
     private float density = 2f;
+    private boolean exclusionOk = false;
+    private String exclusionNote = "-";
     private final SparseFloats lastSentX = new SparseFloats();
 
     @Override
@@ -168,9 +170,40 @@ public class MainActivity extends Activity {
             rects.add(new Rect(Math.max(0, w - band), top, w, h));
             Method m = View.class.getMethod("setSystemGestureExclusionRects", List.class);
             m.invoke(web, rects);
-        } catch (Throwable ignored) {
-            // 拿不到就算了，页面端还有留白兜底
+            exclusionOk = true;
+            exclusionNote = band + "x" + (h - top) + "px";
+        } catch (Throwable t) {
+            exclusionOk = false;
+            exclusionNote = t.getClass().getSimpleName();
         }
+        reportShellState();
+    }
+
+    /** 系统自己声明的手势区有多宽（API 29+）。排除区没盖住它就会被接管。 */
+    private int[] gestureInsets() {
+        try {
+            Object insets = web.getClass().getMethod("getRootWindowInsets").invoke(web);
+            Object gi = insets.getClass().getMethod("getSystemGestureInsets").invoke(insets);
+            int l = gi.getClass().getField("left").getInt(gi);
+            int r = gi.getClass().getField("right").getInt(gi);
+            int b = gi.getClass().getField("bottom").getInt(gi);
+            return new int[] { l, r, b };
+        } catch (Throwable t) {
+            return new int[] { -1, -1, -1 };
+        }
+    }
+
+    /** 把外壳自己的状态喂给页面，好让诊断里能看见排除区到底有没有生效。 */
+    private void reportShellState() {
+        if (web == null) return;
+        int[] g = gestureInsets();
+        final String js = "window.__shell=" + "{ok:" + exclusionOk
+                + ",band:'" + exclusionNote + "'"
+                + ",dpr:" + density
+                + ",gl:" + g[0] + ",gr:" + g[1] + ",gb:" + g[2] + "};";
+        web.post(new Runnable() { public void run() {
+            try { web.evaluateJavascript(js, null); } catch (Throwable ignored) { }
+        } });
     }
 
     /** 原生触摸直采：不消费，只是抢先把每一个按下/抬起/移动转发给 JS。 */

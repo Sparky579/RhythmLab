@@ -46,7 +46,8 @@
     // 渲染分辨率上限。手机屏幕常到 3 倍密度，一帧要填的像素量是主要开销，
     // 而且这部分发生在合成线程（也就是诊断里「我的代码之外」那一项）。
     maxDpr: (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) ? 1.5 : 2,
-    edgeMargin: 28,      // 轨道区左右留白（px）：安卓手势导航会吃掉屏幕边缘的触摸
+    edgeMargin: 48,      // 轨道区左右留白（px）：安卓手势导航会吃掉屏幕边缘的触摸；
+                         // 原生壳里会自动抬到系统声明的手势区宽度以上
     autoFullscreen: true,// 开始时自动进入全屏，减少浏览器/系统手势干扰
   };
 
@@ -131,10 +132,19 @@
       this.ctx2d.setTransform(c.width / r.width, 0, 0, c.height / r.height, 0, 0);
 
       const K = this.keys;
-      // 左右各留一条空白，避免最外侧轨道压在系统手势区里被吃掉触摸
-      const margin = clamp(+this.settings.edgeMargin || 0, 0, Math.max(0, this.W * 0.2));
+      // 左右各留一条空白，避免最外侧轨道压在系统手势区里被吃掉触摸。
+      // 原生壳能拿到系统自己声明的手势区宽度，按它来留白，别靠猜。
+      let margin = clamp(+this.settings.edgeMargin || 0, 0, Math.max(0, this.W * 0.2));
+      const sh = window.__shell;
+      if (sh && sh.gl >= 0) {
+        const gCss = Math.max(sh.gl, sh.gr) / (this.dpr || 1);
+        margin = Math.max(margin, Math.min(this.W * 0.2, gCss + 10));
+      }
+      this.edgeGestureCss = sh && sh.gl >= 0 ? Math.round(Math.max(sh.gl, sh.gr) / (this.dpr || 1)) : -1;
       const avail = Math.max(60, this.W - margin * 2);
-      const laneW = Math.min(avail / K, K === 4 ? 140 : 100);
+      // 轨道铺满留白之间的整块宽度。以前上限写死 140/100，4K 只占屏幕中间一小条，
+      // 手指自然摊开就会落到轨道区之外的屏幕最边缘 —— 那里正是系统手势区。
+      const laneW = avail / K;
       this.laneW = laneW;
       this.laneX0 = (this.W - laneW * K) / 2;
       this.edgeMarginPx = (this.W - laneW * K) / 2;
