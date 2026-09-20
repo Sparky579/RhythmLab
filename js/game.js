@@ -88,19 +88,41 @@
     }
 
     /* ---------- 尺寸 ---------- */
+    /* 视口变化（地址栏伸缩、状态栏进出、旋转）会连发很多次 resize，每次中间尺寸都
+       重建一次几 MB 的画布后备缓冲，足以把主线程堵上几百毫秒——而安卓在主线程卡住
+       期间会直接丢掉排队的触摸。所以：播放中等尺寸稳定下来再处理，且只有变化超过
+       10% 才真正重建缓冲（地址栏伸缩那种幅度就不会重建），小幅变化直接改变换矩阵拉伸复用。 */
+    _onViewportChange() {
+      clearTimeout(this._resizeTimer);
+      const playing = this.state === 'playing' || this.state === 'countin';
+      this._resizeTimer = setTimeout(() => this.resize(), playing ? 220 : 0);
+    }
+
     resize() {
       const c = this.canvas;
       const r = c.getBoundingClientRect();
+      if (!r.width || !r.height) return;
       this.rect = r;
       this.rectAt = performance.now();
+      this.resizeCount = (this.resizeCount || 0) + 1;
+      this._gradCache = null;   // 尺寸变了，缓存的渐变作废
       const cap = Math.max(1, +this.settings.maxDpr || 2);
       const dpr = Math.min(window.devicePixelRatio || 1, cap, this.autoDprCap || 99);
       this.dpr = dpr;
       this.W = r.width; this.H = r.height;
-      const pw = Math.round(r.width * dpr), ph = Math.round(r.height * dpr);
-      if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
-      this.ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
-      this._gradCache = null;   // 尺寸变了，缓存的渐变作废
+
+      const pw = Math.max(1, Math.round(r.width * dpr));
+      const ph = Math.max(1, Math.round(r.height * dpr));
+      const big = !c.width || !c.height
+        || Math.abs(pw - c.width) / c.width > 0.10
+        || Math.abs(ph - c.height) / c.height > 0.10;
+      if (big) {
+        c.width = pw; c.height = ph;
+        this.canvasAllocs = (this.canvasAllocs || 0) + 1;
+      }
+      // 变换按「后备缓冲 ÷ CSS 尺寸」算：小幅变化时直接拉伸复用，肉眼看不出来
+      this.ctx2d.setTransform(c.width / r.width, 0, 0, c.height / r.height, 0, 0);
+
       const K = this.keys;
       // 左右各留一条空白，避免最外侧轨道压在系统手势区里被吃掉触摸
       const margin = clamp(+this.settings.edgeMargin || 0, 0, Math.max(0, this.W * 0.2));
@@ -187,8 +209,8 @@
         // 空格在 7K 里是轨道键，避免触发按钮默认行为
         if (this.state !== 'idle' && this.state !== 'finished' && e.code === 'Space') e.preventDefault();
       });
-      window.addEventListener('resize', () => this.resize());
-      window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 200));
+      window.addEventListener('resize', () => this._onViewportChange());
+      window.addEventListener('orientationchange', () => setTimeout(() => this.resize(), 250));
       document.addEventListener('visibilitychange', () => {
         if (document.hidden && (this.state === 'playing' || this.state === 'countin')) this.pause();
       });
@@ -680,6 +702,7 @@
         stalls: this.stalls.slice(-40), maxGap: Math.round(this.maxGap),
         inputGaps: this.inputGaps(700).slice(-20), lowLatency: this.lowLatency,
         presentStalls: this.presentStalls.slice(-20), maxRafLag: Math.round(this.maxRafLag),
+        resizeCount: this.resizeCount || 0, canvasAllocs: this.canvasAllocs || 0,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
           ? Math.round(this.settings.offsetMs + this.offSum / this.offCount) : null,
@@ -948,7 +971,8 @@
             + (recent.taps >= 4 && recent.hits === 0 ? '   ← 连续打空！' : ''),
           `距上次输入 ${this.inputLog.length ? Math.round(this.chartTime(perfNow) * 1000 - this.inputLog[this.inputLog.length - 1][0]) : '-'}ms`,
           `卡顿 ${this.stalls.length} 次   最长帧 ${Math.round(this.maxGap)}ms`
-            + `   显示滞后 ${Math.round(this.maxRafLag)}ms`
+            + `   显示滞后 ${Math.round(this.maxRafLag)}ms`,
+          `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`
             + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),
           `上次偏差 ${this.lastDt === null ? '打空' : (this.lastDt > 0 ? '+' : '') + this.lastDt.toFixed(0) + 'ms'}`
             + (this.offCount ? `   平均 ${(this.offSum / this.offCount > 0 ? '+' : '')}${(this.offSum / this.offCount).toFixed(0)}ms` : '')

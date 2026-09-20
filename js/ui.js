@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '20';
+  const BUILD = '21';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -426,6 +426,7 @@
     if (res.stalls && res.stalls.length) {
       const worst = Math.max.apply(null, res.stalls.map((x) => x[1]));
       warn.push(`本局画面卡顿 ${res.stalls.length} 次，最长一帧 ${worst}ms`
+        + `（视口变化 ${res.resizeCount} 次 / 画布重建 ${res.canvasAllocs} 次）`
         + `（卡顿期间安卓会直接丢掉排队的触摸，这就是「一段完全点不上、面板数字也不动」的来源）`);
     }
     if (res.taps < hits) warn.push('输入次数少于命中数：有触摸事件没送到页面');

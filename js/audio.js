@@ -167,7 +167,14 @@
           const p2 = ctx.decodeAudioData(buf, ok, bad);
           if (p2 && p2.then) p2.then(ok, bad);
         }))
-        .then((b) => { this.decoded = this.decoded || {}; this.decoded[url] = b; return b; })
+        .then((b) => {
+          // 解码后的 PCM 一条就有 4~5MB，手机上留几条就会造成明显内存压力，
+          // 进而引发大停顿。这里只保留当前正在用的这一条。
+          this.decoded = {}; this.files = {};
+          this.decoded[url] = b;
+          this.files[url] = Promise.resolve(b);
+          return b;
+        })
         .catch((e) => { delete this.files[url]; throw e; });
       return this.files[url];
     }
