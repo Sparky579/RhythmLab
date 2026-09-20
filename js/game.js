@@ -353,6 +353,11 @@
       } else {
         this.bgmSteps = Math.max(1, Math.round(16 / this.bgmRatio));
       }
+      // 乐器音量一次性设到常驻总线上，之后每个音符只连总线、不再新建节点
+      if (this.audio.setInstGain) {
+        for (const inst in (g.drums || {})) this.audio.setInstGain(inst, 1);
+        for (const inst in (g.tones || {})) this.audio.setInstGain(inst, g.tones[inst].gain);
+      }
     }
 
     _scheduleBgm(now) {
@@ -370,7 +375,7 @@
         const when = this.audioStart + this.countIn + t;
         for (const inst in g.drums) {
           const seq = g.drums[inst];
-          if (seq.charAt(gs % seq.length) === 'x') this._pushSrc(this.audio.playBgm(inst, when));
+          if (seq.charAt(gs % seq.length) === 'x') this.audio.playBgm(inst, when);
         }
         // 和弦进行按小节推进（一小节 16 步）
         const prog = g.progression;
@@ -385,12 +390,12 @@
             const voices = MG.BGM_CHORD_CHARS[c];
             if (!voices) continue;
             for (const v of voices) {
-              this._pushSrc(this.audio.playBgm(inst, when, tones[v[0]] + v[1] + oct, tr.gain));
+              this.audio.playBgm(inst, when, tones[v[0]] + v[1] + oct);
             }
           } else {
             const semi = MG.BGM_NOTES[c];
             if (semi === undefined || semi === null) continue;
-            this._pushSrc(this.audio.playBgm(inst, when, semi + oct, tr.gain));
+            this.audio.playBgm(inst, when, semi + oct);
           }
         }
         this.bgmStep++;
@@ -411,12 +416,10 @@
         const barPos = (m / ratio) % loopBars;
         const offset = barPos * barDur;
         const rate = (barDur / ratio) / measDur;
-        this._pushSrc(this.audio.playSlice(
-          this.bgmBuf, this.audioStart + this.countIn + t, offset, measDur, rate, 1));
+        this.audio.playSlice(this.bgmBuf, this.audioStart + this.countIn + t, offset, measDur, rate, 1);
         this.bgmMeasure++;
       }
     }
-    _pushSrc(src) { /* 不再持有引用：暂停时整条总线切断，节点由 GC 自然回收 */ }
 
     start() {
       if (!this.chart) return;
@@ -552,7 +555,7 @@
           if (alt >= 0) { best = alt; assisted = true; lane = nb; this.lanePress[nb] = performance.now(); }
         }
       }
-      if (this.settings.hitSound) this.audio.play('hit', 0, 0.9);
+      if (this.settings.hitSound) this.audio.play('hit', 0);
       if (best < 0) {
         this.emptyTaps++;
         this.lastDt = null;
@@ -629,7 +632,7 @@
         for (let i = this.nextIdx; i < n && notes[i].t <= now; i++) {
           if (st[i] === 0) {
             this._resolve(i, 0, 0);
-            if (this.settings.hitSound) this.audio.play('hit', 0, 0.9);
+            if (this.settings.hitSound) this.audio.play('hit', 0);
             this.lanePress[notes[i].col] = perfNow;
           }
         }

@@ -40,6 +40,13 @@
       this.bgmBus = this.ctx.createGain();
       this.bgmBus.gain.value = this.bgmVolume;
       this.bgmBus.connect(this.schedBus);
+      // 打击音走常驻总线。关键：每次击打都新建 GainNode 挂上去的话，
+      // 这些节点永远不会断开，音频图会随击打次数无限增长，
+      // 每个渲染周期都要遍历，最后把线程拖死——「越打越卡」就是这么来的。
+      this.sfxBus = this.ctx.createGain();
+      this.sfxBus.gain.value = 0.9;
+      this.sfxBus.connect(this.master);
+      this.instBuses = {};
       this._build();
       return this.ctx;
     }
@@ -63,6 +70,25 @@
       this.schedBus.connect(this.master);
       try { this.bgmBus.disconnect(); } catch (e) { /* ignore */ }
       this.bgmBus.connect(this.schedBus);
+      // 乐器总线要重新挂回新的 BGM 总线上
+      for (const k in this.instBuses) {
+        try { this.instBuses[k].disconnect(); } catch (e) { /* ignore */ }
+        this.instBuses[k].connect(this.bgmBus);
+      }
+    }
+    /* 每个乐器一条常驻增益节点，音符只连到它上面，不再逐音符新建 */
+    instBus(name) {
+      let b = this.instBuses[name];
+      if (!b) {
+        b = this.ctx.createGain();
+        b.connect(this.bgmBus);
+        this.instBuses[name] = b;
+      }
+      return b;
+    }
+    setInstGain(name, g) {
+      if (!this.ctx) return;
+      this.instBus(name).gain.value = g === undefined ? 1 : g;
     }
     setBgmVolume(v) {
       this.bgmVolume = v;
@@ -137,20 +163,13 @@
     }
 
     /* BGM 专用播放：semi 为半音偏移（贝斯以 110Hz、琶音以 440Hz 为基准） */
-    playBgm(name, when, semi, gain) {
+    playBgm(name, when, semi) {
       if (!this.enabled || !this.ctx || !this.buffers[name]) return null;
       const ctx = this.ctx;
       const src = ctx.createBufferSource();
       src.buffer = this.buffers[name];
       if (semi) src.playbackRate.value = Math.pow(2, semi / 12);
-      let node = src;
-      if (gain !== undefined && gain !== 1) {
-        const g = ctx.createGain();
-        g.gain.value = gain;
-        src.connect(g);
-        node = g;
-      }
-      node.connect(this.bgmBus);
+      src.connect(this.instBus(name));   // 音量由常驻的乐器总线决定
       src.start(Math.max(when || 0, ctx.currentTime));
       return src;
     }
@@ -199,16 +218,17 @@
       g.connect(this.bgmBus);
       src.start(t0, Math.max(0, offset));
       src.stop(t0 + dur + fade + 0.01);
+      // 这个 GainNode 是每段一个（切片需要独立包络），播完必须断开，
+      // 否则同样会在总线上越挂越多
+      src.onended = () => { try { g.disconnect(); } catch (e) { /* ignore */ } };
       return src;
     }
-    play(name, when, gain = 1) {
-      if (!this.enabled || !this.ctx) return;
+    play(name, when) {
+      if (!this.enabled || !this.ctx || !this.buffers[name]) return;
       const ctx = this.ctx;
       const src = ctx.createBufferSource();
       src.buffer = this.buffers[name];
-      if (gain !== 1) {
-        const g = ctx.createGain(); g.gain.value = gain; src.connect(g); g.connect(this.master);
-      } else src.connect(this.master);
+      src.connect(this.sfxBus);
       src.start(Math.max(when || 0, ctx.currentTime));
     }
     now() { return this.ctx ? this.ctx.currentTime : 0; }

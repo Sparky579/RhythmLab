@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '21';
+  const BUILD = '22';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
