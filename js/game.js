@@ -40,6 +40,7 @@
     laneSlackPx: 12,     // 轨道判定余量：落点越过轨道边线这么多像素内仍算这一轨
     inputDebug: false,   // 画面左上角实时显示输入统计，用来排查断触
     autoCalibrate: false,// 默认不动偏移；要用的话在设置里打开，或在结果页手动点一次
+    maxDpr: 2,           // 渲染分辨率上限：手机上 3 倍像素填充很吃力，降到 2 几乎看不出差别
     edgeMargin: 28,      // 轨道区左右留白（px）：安卓手势导航会吃掉屏幕边缘的触摸
     autoFullscreen: true,// 开始时自动进入全屏，减少浏览器/系统手势干扰
   };
@@ -86,12 +87,14 @@
       const r = c.getBoundingClientRect();
       this.rect = r;
       this.rectAt = performance.now();
-      const dpr = Math.min(window.devicePixelRatio || 1, 3);
+      const cap = Math.max(1, +this.settings.maxDpr || 2);
+      const dpr = Math.min(window.devicePixelRatio || 1, cap, this.autoDprCap || 99);
       this.dpr = dpr;
       this.W = r.width; this.H = r.height;
       const pw = Math.round(r.width * dpr), ph = Math.round(r.height * dpr);
       if (c.width !== pw || c.height !== ph) { c.width = pw; c.height = ph; }
       this.ctx2d.setTransform(dpr, 0, 0, dpr, 0, 0);
+      this._gradCache = null;   // 尺寸变了，缓存的渐变作废
       const K = this.keys;
       // 左右各留一条空白，避免最外侧轨道压在系统手势区里被吃掉触摸
       const margin = clamp(+this.settings.edgeMargin || 0, 0, Math.max(0, this.W * 0.2));
@@ -282,6 +285,10 @@
       this.tsAnomalies = 0; this.stateDrops = 0; this.lastDt = null;
       this.offSum = 0; this.offCount = 0;
       this.inputLog = [];         // 最近若干次输入，排查断触用
+      // 卡顿统计：安卓在应用无响应期间会直接丢掉排队的触摸，
+      // 表现就是「一段完全点不上、面板数字也不动」。这里把每一次长帧记下来。
+      this.stalls = []; this.lastFrameAt = 0; this.maxGap = 0;
+      this.autoDprCap = 0;        // 连续卡顿时自动压低渲染分辨率
       this.bpmIdx = 0;
       this.currentBpm = chart.measureBpm ? chart.measureBpm[0] : chart.bpm;
       this.bpmFlashAt = -1;
@@ -380,11 +387,7 @@
         this.bgmMeasure++;
       }
     }
-    _pushSrc(src) {
-      if (!src) return;
-      this.scheduled.push(src);
-      if (this.scheduled.length > 256) this.scheduled.splice(0, 128);
-    }
+    _pushSrc(src) { /* 不再持有引用：暂停时整条总线切断，节点由 GC 自然回收 */ }
 
     start() {
       if (!this.chart) return;
@@ -394,7 +397,6 @@
       this.startPerf = performance.now() + 300;
       this.audioStart = this.audio.now() + 0.3;
       this.schedBeat = -this.countInBeats;
-      this.scheduled = [];
       this.state = 'countin';
       cancelAnimationFrame(this.raf);
       const loop = () => { this.raf = requestAnimationFrame(loop); this._frame(); };
@@ -454,9 +456,7 @@
     }
 
     _stopScheduled() {
-      if (!this.scheduled) return;
-      for (const s of this.scheduled) { try { s.stop(); } catch (e) { /* */ } }
-      this.scheduled.length = 0;
+      if (this.audio && this.audio.cutScheduled) this.audio.cutScheduled();
     }
 
     /* ---------- 判定 ---------- */
@@ -553,6 +553,21 @@
     /* ---------- 每帧 ---------- */
     _frame() {
       const perfNow = performance.now();
+      if (this.lastFrameAt) {
+        const gap = perfNow - this.lastFrameAt;
+        if (gap > this.maxGap) this.maxGap = gap;
+        if (gap > 120) {
+          this.stalls.push([Math.round(this.chartTime(perfNow) * 1000), Math.round(gap)]);
+          if (this.stalls.length > 120) this.stalls.shift();
+          // 连着卡三次就自动降一档渲染分辨率：掉帧比画质糙更要命，
+          // 卡顿期间安卓会把排队的触摸直接丢掉。
+          if (this.stalls.length >= 3 && !this.autoDprCap && this.dpr > 1.25) {
+            this.autoDprCap = Math.max(1, this.dpr - 0.75);
+            this.resize();
+          }
+        }
+      }
+      this.lastFrameAt = perfNow;
       if (this.state === 'resuming') {
         if (perfNow >= this.resumeAt) this._doResume();
         else { this._draw(this.chartTime(this.pausedPerf), perfNow); return; }
@@ -601,10 +616,8 @@
           const ctx = this.audio.ctx;
           const src = ctx.createBufferSource();
           src.buffer = this.audio.buffers[name];
-          src.connect(this.audio.master);
+          src.connect(this.audio.schedBus || this.audio.master);
           src.start(Math.max(when, ctx.currentTime));
-          this.scheduled.push(src);
-          if (this.scheduled.length > 32) this.scheduled.splice(0, 16);
         }
         this.schedBeat++;
       }
@@ -644,6 +657,8 @@
         nativeMode: this.nativeMode, nativeSeen: this.nativeSeen,
         inputLog: this.inputLog.slice(-400), clockDelta: this.clockDelta,
         blackouts: this.blackouts(1200, 5),
+        stalls: this.stalls.slice(-40), maxGap: Math.round(this.maxGap),
+        dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
           ? Math.round(this.settings.offsetMs + this.offSum / this.offCount) : null,
         autoplay: !!this.settings.autoplay,
@@ -757,11 +772,11 @@
       for (let i = 0; i < K; i++) {
         const p = (perfNow - this.lanePress[i]) / 220;
         if (p < 1) {
-          const gr = g.createLinearGradient(0, judgeY - 240, 0, judgeY);
-          gr.addColorStop(0, 'rgba(120,170,255,0)');
-          gr.addColorStop(1, `rgba(140,185,255,${0.55 * (1 - p)})`);
-          g.fillStyle = gr;
+          // 渐变对象缓存下来复用，只靠 globalAlpha 调深浅，避免每帧每轨都新建
+          g.globalAlpha = 1 - p;
+          g.fillStyle = this._pressGrad(judgeY);
           g.fillRect(x0 + i * lw, judgeY - 240, lw, 240);
+          g.globalAlpha = 1;
           // 判定线上一条亮杠，每一次被收到的输入都看得见
           g.fillStyle = `rgba(200,225,255,${0.9 * (1 - p)})`;
           g.fillRect(x0 + i * lw + 2, judgeY - 2, lw - 4, 4);
@@ -772,12 +787,8 @@
         g.fillText(labels[i], this.laneCenter(i), judgeY + 30);
       }
 
-      // 判定线
-      const grad = g.createLinearGradient(0, judgeY - 3, 0, judgeY + 3);
-      grad.addColorStop(0, 'rgba(120,160,255,0)');
-      grad.addColorStop(0.5, 'rgba(160,190,255,0.9)');
-      grad.addColorStop(1, 'rgba(120,160,255,0)');
-      g.fillStyle = grad;
+      // 判定线（渐变同样缓存）
+      g.fillStyle = this._lineGrad(judgeY);
       g.fillRect(x0, judgeY - 3, fieldW, 6);
 
       // 音符
@@ -902,6 +913,8 @@
             + (this.clockDelta === null ? '' : `   时钟偏移 ${this.clockDelta.toFixed(0)}ms`),
           `近 3 秒 触摸 ${recent.taps} 命中 ${recent.hits}`
             + (recent.taps >= 4 && recent.hits === 0 ? '   ← 连续打空！' : ''),
+          `卡顿 ${this.stalls.length} 次   最长帧 ${Math.round(this.maxGap)}ms`
+            + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),
           `上次偏差 ${this.lastDt === null ? '打空' : (this.lastDt > 0 ? '+' : '') + this.lastDt.toFixed(0) + 'ms'}`
             + (this.offCount ? `   平均 ${(this.offSum / this.offCount > 0 ? '+' : '')}${(this.offSum / this.offCount).toFixed(0)}ms` : '')
             + (this.tsAnomalies ? `   时间戳异常 ${this.tsAnomalies}` : ''),
@@ -951,6 +964,31 @@
         g.fillStyle = '#fff'; g.font = '800 64px "Segoe UI", system-ui, sans-serif';
         g.fillText(String(Math.max(1, Math.ceil((this.resumeAt - perfNow) / 1000 * 3))), W / 2, H * 0.4);
       }
+    }
+
+    /* 两个渐变只在尺寸/判定线变化时重建 */
+    _pressGrad(judgeY) {
+      const c = this._gradCache;
+      if (c && c.y === judgeY) return c.press;
+      this._buildGrads(judgeY);
+      return this._gradCache.press;
+    }
+    _lineGrad(judgeY) {
+      const c = this._gradCache;
+      if (c && c.y === judgeY) return c.line;
+      this._buildGrads(judgeY);
+      return this._gradCache.line;
+    }
+    _buildGrads(judgeY) {
+      const g = this.ctx2d;
+      const press = g.createLinearGradient(0, judgeY - 240, 0, judgeY);
+      press.addColorStop(0, 'rgba(140,185,255,0)');
+      press.addColorStop(1, 'rgba(140,185,255,0.55)');
+      const line = g.createLinearGradient(0, judgeY - 3, 0, judgeY + 3);
+      line.addColorStop(0, 'rgba(120,160,255,0)');
+      line.addColorStop(0.5, 'rgba(160,190,255,0.9)');
+      line.addColorStop(1, 'rgba(120,160,255,0)');
+      this._gradCache = { y: judgeY, press, line };
     }
 
     _roundRect(g, x, y, w, h, r) {

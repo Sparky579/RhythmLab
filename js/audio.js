@@ -31,10 +31,15 @@
       this.master = this.ctx.createGain();
       this.master.gain.value = this.volume;
       this.master.connect(this.limiter);
-      // BGM 单独一条总线，压在打击音下面
+      // 所有「提前排期」的声音（节拍器 + BGM）走这条总线。
+      // 暂停时整条断开重建即可，不必逐个持有 AudioBufferSourceNode 的引用——
+      // 那样会把几百个节点钉在内存里，直到一次性释放，造成周期性 GC 卡顿。
+      this.schedBus = this.ctx.createGain();
+      this.schedBus.connect(this.master);
+      // BGM 单独一条总线控制音量，挂在排期总线下面
       this.bgmBus = this.ctx.createGain();
       this.bgmBus.gain.value = this.bgmVolume;
-      this.bgmBus.connect(this.master);
+      this.bgmBus.connect(this.schedBus);
       this._build();
       return this.ctx;
     }
@@ -49,6 +54,15 @@
     setVolume(v) {
       this.volume = v;
       if (this.master) this.master.gain.value = v;
+    }
+    /* 切断所有已排期但还没响的声音：断开旧总线并重建，旧节点会被自然回收 */
+    cutScheduled() {
+      if (!this.ctx || !this.schedBus) return;
+      try { this.schedBus.disconnect(); } catch (e) { /* ignore */ }
+      this.schedBus = this.ctx.createGain();
+      this.schedBus.connect(this.master);
+      try { this.bgmBus.disconnect(); } catch (e) { /* ignore */ }
+      this.bgmBus.connect(this.schedBus);
     }
     setBgmVolume(v) {
       this.bgmVolume = v;
