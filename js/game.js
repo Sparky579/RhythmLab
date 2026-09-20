@@ -38,9 +38,12 @@
     volume: 0.8,
     showErrorBar: true,
     laneSlackPx: 12,     // 轨道判定余量：落点越过轨道边线这么多像素内仍算这一轨
+    minimalFx: false,    // 极简画面：去掉拍线、按下高亮、打击特效，只留音符与判定线
     inputDebug: false,   // 画面左上角实时显示输入统计，用来排查断触
     autoCalibrate: false,// 默认不动偏移；要用的话在设置里打开，或在结果页手动点一次
-    maxDpr: 2,           // 渲染分辨率上限：手机上 3 倍像素填充很吃力，降到 2 几乎看不出差别
+    // 渲染分辨率上限。手机屏幕常到 3 倍密度，一帧要填的像素量是主要开销，
+    // 而且这部分发生在合成线程（也就是诊断里「我的代码之外」那一项）。
+    maxDpr: (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) ? 1.5 : 2,
     edgeMargin: 28,      // 轨道区左右留白（px）：安卓手势导航会吃掉屏幕边缘的触摸
     autoFullscreen: true,// 开始时自动进入全屏，减少浏览器/系统手势干扰
   };
@@ -74,6 +77,7 @@
       this.lanePress = new Float64Array(7);
       this.touches = new Map();   // identifier -> {lane, x}
       this.lastTouchAt = 0;
+      this._posTmp = { lane: 0, frac: 0 };
       this.clockDelta = null;     // event.timeStamp -> performance.now() 的偏移
       this.nativeMode = false;    // 原生壳直采触摸时为 true
       this.lastNativeAt = 0;
@@ -164,9 +168,10 @@
         });
       }, { passive: false });
 
-      // 手指没完全抬起就滑到别的轨（手机上最常见的「断触」）：滑过边界也算一次击打
+      // 手指没完全抬起就滑到别的轨（手机上最常见的「断触」）：滑过边界也算一次击打。
+      // 用被动监听：touchmove 是高频事件，四指按住时每秒可达近千次；非被动监听会让
+      // 浏览器每次都同步等 JS 返回，还会禁用事件合并。滚动已由 touch-action:none 挡住。
       root.addEventListener('touchmove', (e) => {
-        if (e.cancelable) e.preventDefault();
         if (this.nativeMode) return;
         const ts = this._evtTime(e);
         each(e.changedTouches, (t) => {
@@ -178,7 +183,7 @@
             this.inputLane(pos.lane, ts, pos.frac);
           }
         });
-      }, { passive: false });
+      }, { passive: true });
 
       const release = (e) => {
         this.lastTouchAt = performance.now();
@@ -265,7 +270,7 @@
     /* canvas 位置可能因地址栏收起、旋转等变化，定期重新量一次，避免按到错误的轨 */
     _rect() {
       const now = performance.now();
-      if (!this.rect || now - this.rectAt > 250) {
+      if (!this.rect || now - this.rectAt > 500) {
         this.rect = this.canvas.getBoundingClientRect();
         this.rectAt = now;
       }
@@ -312,7 +317,13 @@
       this.taps = 0; this.emptyTaps = 0; this.assistHits = 0;
       this.tsAnomalies = 0; this.stateDrops = 0; this.lastDt = null;
       this.offSum = 0; this.offCount = 0;
-      this.inputLog = [];         // 最近若干次输入，排查断触用
+      // 输入日志用定长数组做环形缓冲：原来每次击打 push 一个新数组，
+      // 狂按时是一笔持续的垃圾来源
+      this.logCap = 400;
+      this.logT = new Float64Array(this.logCap);
+      this.logLane = new Int8Array(this.logCap);
+      this.logDt = new Float32Array(this.logCap);
+      this.logN = 0;
       // 卡顿统计：安卓在应用无响应期间会直接丢掉排队的触摸，
       // 表现就是「一段完全点不上、面板数字也不动」。这里把每一次长帧记下来。
       this.stalls = []; this.lastFrameAt = 0; this.maxGap = 0;
@@ -524,9 +535,11 @@
       const ct = this._tInput(ts);
       this._judgeInput(lane, ct, frac);
       // 记一笔：谁、什么时候、落在哪、判成什么
-      this.inputLog.push([Math.round(ct * 1000), lane, this.lastDt === null ? null : Math.round(this.lastDt),
-                          this.nativeMode ? 1 : 0]);
-      if (this.inputLog.length > 600) this.inputLog.splice(0, 200);
+      const li = this.logN % this.logCap;
+      this.logT[li] = ct * 1000;
+      this.logLane[li] = lane;
+      this.logDt[li] = this.lastDt === null ? NaN : this.lastDt;
+      this.logN++;
     }
 
     /* 该轨窗口内最早的未判音符 */
@@ -729,7 +742,7 @@
         taps: this.taps, emptyTaps: this.emptyTaps, assistHits: this.assistHits,
         tsAnomalies: this.tsAnomalies, stateDrops: this.stateDrops,
         nativeMode: this.nativeMode, nativeSeen: this.nativeSeen,
-        inputLog: this.inputLog.slice(-400), clockDelta: this.clockDelta,
+        clockDelta: this.clockDelta,
         blackouts: this.blackouts(1200, 5),
         stalls: this.stalls.slice(-40), maxGap: Math.round(this.maxGap),
         inputGaps: this.inputGaps(700).slice(-20), lowLatency: this.lowLatency,
@@ -750,11 +763,12 @@
     _recentInput(ms) {
       const nowCt = this.chartTime(performance.now()) * 1000;
       let taps = 0, hits = 0;
-      for (let i = this.inputLog.length - 1; i >= 0; i--) {
-        const e = this.inputLog[i];
-        if (nowCt - e[0] > ms) break;
+      const n = Math.min(this.logN, this.logCap);
+      for (let k = 1; k <= n; k++) {
+        const i = (this.logN - k) % this.logCap;
+        if (nowCt - this.logT[i] > ms) break;
         taps++;
-        if (e[2] !== null) hits++;
+        if (!isNaN(this.logDt[i])) hits++;
       }
       return { taps, hits };
     }
@@ -763,9 +777,12 @@
        这一项和卡顿统计一起看：卡顿为 0 却有输入空档，说明触摸是在页面之外被丢掉的。 */
     inputGaps(minMs) {
       const out = [];
-      for (let i = 1; i < this.inputLog.length; i++) {
-        const gap = this.inputLog[i][0] - this.inputLog[i - 1][0];
-        if (gap >= minMs) out.push({ at: this.inputLog[i - 1][0], ms: Math.round(gap) });
+      const n = Math.min(this.logN, this.logCap);
+      for (let k = n - 1; k >= 1; k--) {
+        const i = (this.logN - 1 - k) % this.logCap;
+        const j = (this.logN - k) % this.logCap;
+        const gap = this.logT[j] - this.logT[i];
+        if (gap >= minMs) out.push({ at: Math.round(this.logT[i]), ms: Math.round(gap) });
       }
       return out;
     }
@@ -774,7 +791,10 @@
     blackouts(minMs, minTaps) {
       const out = [];
       let start = null, count = 0, lastT = 0;
-      for (const e of this.inputLog) {
+      const n = Math.min(this.logN, this.logCap);
+      for (let k = n; k >= 1; k--) {
+        const i = (this.logN - k) % this.logCap;
+        const e = [this.logT[i], this.logLane[i], isNaN(this.logDt[i]) ? null : this.logDt[i]];
         if (e[2] === null) {                       // 这一下打空
           if (start === null) start = e[0];
           count++; lastT = e[0];
@@ -839,8 +859,9 @@
       g.fillRect(x0, 0, fieldW, H);
 
       // 拍线（变速下逐拍取绝对时间）
+      const fx = !this.settings.minimalFx;
       g.lineWidth = 1;
-      for (let i = Math.max(-this.countInBeats, this._beatIndexAfter(now) - 1); ; i++) {
+      if (fx) for (let i = Math.max(-this.countInBeats, this._beatIndexAfter(now) - 1); ; i++) {
         const bt = this._beatTime(i);
         if (bt === Infinity) break;
         const dt = bt - now;
@@ -859,12 +880,13 @@
       }
       const labels = KEYMAP[K].labels;
       for (let i = 0; i < K; i++) {
-        const p = (perfNow - this.lanePress[i]) / 220;
+        const p = fx ? (perfNow - this.lanePress[i]) / 220 : 2;
         if (p < 1) {
-          // 渐变对象缓存下来复用，只靠 globalAlpha 调深浅，避免每帧每轨都新建
+          // 渐变填充是逐像素运算，四指狂按时每帧四块 240px 高的渐变足以把光栅化顶爆。
+          // 改成预渲染一张小图，每帧只做一次 drawImage。
           g.globalAlpha = 1 - p;
-          g.fillStyle = this._pressGrad(judgeY);
-          g.fillRect(x0 + i * lw, judgeY - 240, lw, 240);
+          const img = this._pressImg();
+          if (img) g.drawImage(img, x0 + i * lw, judgeY - 240, lw, 240);
           g.globalAlpha = 1;
           // 判定线上一条亮杠，每一次被收到的输入都看得见
           g.fillStyle = `rgba(200,225,255,${0.9 * (1 - p)})`;
@@ -893,17 +915,17 @@
         const y = judgeY * (1 - dt / approach);
         g.globalAlpha = st[i] === 2 ? clamp(1 + dt / 0.25, 0, 1) * 0.3 : 1;
         const bx = x0 + nt.col * lw + pad, bw = lw - pad * 2;
+        // 直接矩形填充：圆角要构造 4 段弧的路径，每帧几十个音符累计不便宜，
+        // 而这个尺寸下圆角肉眼几乎看不出来
         g.fillStyle = this.noteColor(nt);
-        this._roundRect(g, bx, y - h / 2, bw, h, Math.min(6, h / 2));
-        g.fill();
+        g.fillRect(bx, y - h / 2, bw, h);
         g.fillStyle = 'rgba(255,255,255,0.4)';
-        this._roundRect(g, bx + 2, y - h / 2 + 2, bw - 4, h * 0.28, 2);
-        g.fill();
+        g.fillRect(bx + 2, y - h / 2 + 2, bw - 4, h * 0.28);
       }
       g.globalAlpha = 1;
 
       // 打击特效
-      for (const e of this.effects) {
+      if (fx) for (const e of this.effects) {
         if (e.t0 < 0) continue;
         const p = (perfNow - e.t0) / 260;
         if (p >= 1) { e.t0 = -1; continue; }
@@ -1002,7 +1024,7 @@
             + (this.clockDelta === null ? '' : `   时钟偏移 ${this.clockDelta.toFixed(0)}ms`),
           `近 3 秒 触摸 ${recent.taps} 命中 ${recent.hits}`
             + (recent.taps >= 4 && recent.hits === 0 ? '   ← 连续打空！' : ''),
-          `距上次输入 ${this.inputLog.length ? Math.round(this.chartTime(perfNow) * 1000 - this.inputLog[this.inputLog.length - 1][0]) : '-'}ms`,
+          `距上次输入 ${this.logN ? Math.round(this.chartTime(perfNow) * 1000 - this.logT[(this.logN - 1) % this.logCap]) : '-'}ms`,
           `卡顿 ${this.stalls.length} 次   最长帧 ${Math.round(this.maxGap)}ms`
             + `   显示滞后 ${Math.round(this.maxRafLag)}ms`,
           `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`,
@@ -1058,6 +1080,22 @@
         g.fillStyle = '#fff'; g.font = '800 64px "Segoe UI", system-ui, sans-serif';
         g.fillText(String(Math.max(1, Math.ceil((this.resumeAt - perfNow) / 1000 * 3))), W / 2, H * 0.4);
       }
+    }
+
+    /* 按下高亮预渲染成一张 1×64 的小图，每帧靠 drawImage 拉伸，省掉渐变逐像素填充 */
+    _pressImg() {
+      if (this._pressCanvas) return this._pressCanvas;
+      const h = 64;
+      const c = document.createElement('canvas');
+      c.width = 1; c.height = h;
+      const cg = c.getContext('2d');
+      const gr = cg.createLinearGradient(0, 0, 0, h);
+      gr.addColorStop(0, 'rgba(140,185,255,0)');
+      gr.addColorStop(1, 'rgba(140,185,255,0.55)');
+      cg.fillStyle = gr;
+      cg.fillRect(0, 0, 1, h);
+      this._pressCanvas = c;
+      return c;
     }
 
     /* 两个渐变只在尺寸/判定线变化时重建 */
