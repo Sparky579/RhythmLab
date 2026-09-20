@@ -10,16 +10,19 @@
       this.enabled = true;
       this.volume = 0.8;
       this.bgmVolume = 1.0;
+      this._sfxWindowAt = 0; this._sfxInWindow = 0;
     }
     ensure() {
       if (this.ctx) return this.ctx;
       const AC = window.AudioContext || window.webkitAudioContext;
       if (!AC) return null;
-      this.ctx = new AC({ latencyHint: 'interactive' });
+      // 不再强求 latencyHint:'interactive'：那会让音频线程以极短缓冲频繁唤醒，
+      // 弱机上和主线程抢 CPU。判定用的是事件时间戳，本来就不依赖音频延迟。
+      this.ctx = new AC();
       // 末端两级保护：压缩器收住持续电平，软削波兜住瞬态，避免多押 + 鼓组叠满时失真
       this.softClip = this.ctx.createWaveShaper();
       this.softClip.curve = this._clipCurve();
-      this.softClip.oversample = '2x';
+      this.softClip.oversample = 'none';   // 2x 过采样在手机上太贵，收益仅是少一点混叠
       this.softClip.connect(this.ctx.destination);
       this.limiter = this.ctx.createDynamicsCompressor();
       this.limiter.threshold.value = -10;
@@ -226,6 +229,11 @@
     play(name, when) {
       if (!this.enabled || !this.ctx || !this.buffers[name]) return;
       const ctx = this.ctx;
+      // 狂按时限流：20ms 内最多 4 个打击音。和弦（同时最多 4 押）不受影响，
+      // 但能挡住四指连打把音频节点创建量顶到失控。
+      const now = ctx.currentTime;
+      if (now - this._sfxWindowAt > 0.02) { this._sfxWindowAt = now; this._sfxInWindow = 0; }
+      if (++this._sfxInWindow > 4) return;
       const src = ctx.createBufferSource();
       src.buffer = this.buffers[name];
       src.connect(this.sfxBus);

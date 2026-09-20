@@ -318,6 +318,8 @@
       this.stalls = []; this.lastFrameAt = 0; this.maxGap = 0;
       this.autoDprCap = 0;        // 连续卡顿时自动压低渲染分辨率
       this.presentStalls = []; this.maxRafLag = 0;
+      this.lastPhase = { sched: 0, logic: 0, draw: 0 };
+      this.lastFrameDur = 0; this.maxFrameDur = 0; this.maxOutside = 0;
       this.bpmIdx = 0;
       this.currentBpm = chart.measureBpm ? chart.measureBpm[0] : chart.bpm;
       this.bpmFlashAt = -1;
@@ -598,12 +600,19 @@
     /* ---------- 每帧 ---------- */
     _frame() {
       const perfNow = performance.now();
+      // 一帧的开销拆成四块：音频排期 / 判定逻辑 / 绘制 / 我的代码之外。
+      // 「之外」= 两帧起点间隔 - 上一帧在我代码里花的时间，也就是浏览器自己
+      // 干的活（GC、布局、合成、输入派发、跨线程同步）。卡顿到底赖谁，看这一项。
       if (this.lastFrameAt) {
         const gap = perfNow - this.lastFrameAt;
         if (gap > this.maxGap) this.maxGap = gap;
         if (gap > 120) {
-          this.stalls.push([Math.round(this.chartTime(perfNow) * 1000), Math.round(gap)]);
+          const outside = Math.max(0, gap - (this.lastFrameDur || 0));
+          this.stalls.push([Math.round(this.chartTime(perfNow) * 1000), Math.round(gap),
+                            Math.round(outside), Math.round(this.lastPhase.sched),
+                            Math.round(this.lastPhase.logic), Math.round(this.lastPhase.draw)]);
           if (this.stalls.length > 120) this.stalls.shift();
+          if (outside > this.maxOutside) this.maxOutside = outside;
           // 连着卡三次就自动降一档渲染分辨率：掉帧比画质糙更要命，
           // 卡顿期间安卓会把排队的触摸直接丢掉。
           if (this.stalls.length >= 3 && !this.autoDprCap && this.dpr > 1.25) {
@@ -613,15 +622,21 @@
         }
       }
       this.lastFrameAt = perfNow;
+      const fStart = perfNow;
+
       if (this.state === 'resuming') {
         if (perfNow >= this.resumeAt) this._doResume();
-        else { this._draw(this.chartTime(this.pausedPerf), perfNow); return; }
+        else { this._draw(this.chartTime(this.pausedPerf), perfNow); this._endFrame(fStart); return; }
       }
-      if (this.state === 'paused') { this._draw(this.chartTime(this.pausedPerf), perfNow); return; }
+      if (this.state === 'paused') { this._draw(this.chartTime(this.pausedPerf), perfNow); this._endFrame(fStart); return; }
       const now = this.chartTime(perfNow);
       if (this.state === 'countin' && now >= 0) this.state = 'playing';
+
+      const t1 = performance.now();
       this._scheduleAudio(now);
       this._scheduleBgm(now);
+      const t2 = performance.now();
+
       const notes = this.chart.notes, n = notes.length, st = this.status;
       while (this.nextIdx < n && st[this.nextIdx] !== 0) this.nextIdx++;
       const missBefore = now - this.greatMs / 1000;
@@ -644,8 +659,22 @@
         const bpm = this.chart.measureBpm[this.bpmIdx];
         if (bpm !== this.currentBpm) { this.currentBpm = bpm; this.bpmFlashAt = perfNow; }
       }
+      const t3 = performance.now();
       this._draw(now, perfNow);
+      const t4 = performance.now();
+
+      this.lastPhase.sched = t2 - t1;
+      this.lastPhase.logic = t3 - t2;
+      this.lastPhase.draw = t4 - t3;
+      this.lastFrameDur = t4 - fStart;
+      if (this.lastFrameDur > this.maxFrameDur) this.maxFrameDur = this.lastFrameDur;
+
       if (this.state === 'playing' && now > this.chart.duration + 1.2) this._finish();
+    }
+
+    _endFrame(fStart) {
+      this.lastFrameDur = performance.now() - fStart;
+      this.lastPhase.sched = 0; this.lastPhase.logic = 0; this.lastPhase.draw = this.lastFrameDur;
     }
 
     _scheduleAudio(now) {
@@ -706,6 +735,7 @@
         inputGaps: this.inputGaps(700).slice(-20), lowLatency: this.lowLatency,
         presentStalls: this.presentStalls.slice(-20), maxRafLag: Math.round(this.maxRafLag),
         resizeCount: this.resizeCount || 0, canvasAllocs: this.canvasAllocs || 0,
+        maxFrameDur: Math.round(this.maxFrameDur), maxOutside: Math.round(this.maxOutside),
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
           ? Math.round(this.settings.offsetMs + this.offSum / this.offCount) : null,
@@ -975,7 +1005,9 @@
           `距上次输入 ${this.inputLog.length ? Math.round(this.chartTime(perfNow) * 1000 - this.inputLog[this.inputLog.length - 1][0]) : '-'}ms`,
           `卡顿 ${this.stalls.length} 次   最长帧 ${Math.round(this.maxGap)}ms`
             + `   显示滞后 ${Math.round(this.maxRafLag)}ms`,
-          `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`
+          `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`,
+          `本帧 绘制${this.lastPhase.draw.toFixed(1)} 音频${this.lastPhase.sched.toFixed(1)} 逻辑${this.lastPhase.logic.toFixed(1)}ms`,
+          `最长: 我的代码 ${Math.round(this.maxFrameDur)}ms   代码之外 ${Math.round(this.maxOutside)}ms`
             + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),
           `上次偏差 ${this.lastDt === null ? '打空' : (this.lastDt > 0 ? '+' : '') + this.lastDt.toFixed(0) + 'ms'}`
             + (this.offCount ? `   平均 ${(this.offSum / this.offCount > 0 ? '+' : '')}${(this.offSum / this.offCount).toFixed(0)}ms` : '')

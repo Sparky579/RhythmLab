@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '22';
+  const BUILD = '23';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -425,7 +425,14 @@
     }
     if (res.stalls && res.stalls.length) {
       const worst = Math.max.apply(null, res.stalls.map((x) => x[1]));
-      warn.push(`本局画面卡顿 ${res.stalls.length} 次，最长一帧 ${worst}ms`
+      // 把卡顿归因说清楚：是我的代码慢，还是浏览器/系统在我代码之外卡住
+      const inMine = res.maxFrameDur || 0, outside = res.maxOutside || 0;
+      const blame = outside > inMine * 2
+        ? `其中最长 ${outside}ms 花在本程序代码之外（GC / 浏览器 / 系统），不是渲染或判定慢`
+        : `本程序单帧最长 ${inMine}ms`;
+      const s0 = res.stalls[res.stalls.length - 1] || [];
+      warn.push(`本局画面卡顿 ${res.stalls.length} 次，最长一帧 ${worst}ms。${blame}。`
+        + `最近一次拆分：绘制 ${s0[5] || 0}ms / 音频 ${s0[3] || 0}ms / 逻辑 ${s0[4] || 0}ms`
         + `（视口变化 ${res.resizeCount} 次 / 画布重建 ${res.canvasAllocs} 次）`
         + `（卡顿期间安卓会直接丢掉排队的触摸，这就是「一段完全点不上、面板数字也不动」的来源）`);
     }
