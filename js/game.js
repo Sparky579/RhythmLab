@@ -40,6 +40,7 @@
     laneSlackPx: 12,     // 轨道判定余量：落点越过轨道边线这么多像素内仍算这一轨
     minimalFx: false,    // 极简画面：去掉拍线、按下高亮、打击特效，只留音符与判定线
     inputDebug: false,   // 画面左上角实时显示输入统计，用来排查断触
+    blockGestures: false,  // 原生壳专用：FLAG_SECURE，试着让 ROM 的多指手势检测放手
     autoCalibrate: false,// 默认不动偏移；要用的话在设置里打开，或在结果页手动点一次
     // 渲染分辨率上限。手机屏幕常到 3 倍密度，一帧要填的像素量是主要开销，
     // 而且这部分发生在合成线程（也就是诊断里「我的代码之外」那一项）。
@@ -805,7 +806,6 @@
         frameHist: Array.from(this.frameHist),
         raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
         maxFingers: this.maxFingers,
-        starve: this._starveStats(),
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
@@ -814,33 +814,6 @@
         perfectMs: this.perfectMs, greatMs: this.greatMs,
         segments: this._segmentStats(),
         chart: this.chart,
-      };
-    }
-
-    /* 落在「输入断流」窗口里的 MISS：这些音符不是没打中，是系统没把手指送进来。
-       按谱面时间跟 rawGaps 的区间求交，算出一个剔除掉它们之后的准确率。 */
-    _starveStats() {
-      const g = this.rawGaps;
-      if (!g.length || !this.chart) return null;
-      const win = this.greatMs / 1000;
-      let miss = 0, total = 0;
-      for (let i = 0; i < this.chart.notes.length; i++) {
-        const t = this.chart.notes[i].t;
-        let inGap = false;
-        for (let k = 0; k < g.length; k++) {
-          const end = g[k][0] / 1000, start = end - g[k][1] / 1000;
-          if (t >= start - win && t <= end + win) { inGap = true; break; }
-        }
-        if (!inGap) continue;
-        total++;
-        if (this.judge[i] === 2) miss++;
-      }
-      if (!miss) return null;
-      const n = this.chart.notes.length;
-      const kept = n - miss;
-      return {
-        notes: total, miss,
-        accuracy: kept > 0 ? (this.scoreSum / kept) : 0,
       };
     }
 

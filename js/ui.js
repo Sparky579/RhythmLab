@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '27';
+  const BUILD = '28';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -433,10 +433,6 @@
         + (r.tc > 0 ? '（有 touchcancel：系统或浏览器中途接管了手势）' : '')
         + (r.skipped > 0 ? ` 被过滤${r.skipped}` : ''));
     }
-    if (res.starve) {
-      warn.push(`有 ${res.starve.miss} 个 MISS 落在输入断流期间（系统没把手指送进来，不是你没打中）。`
-        + `剔除后准确率 ${(res.starve.accuracy * 100).toFixed(2)}%`);
-    }
     if (res.inputGaps && res.inputGaps.length) {
       const worst = Math.max.apply(null, res.inputGaps.map((x) => x.ms));
       warn.push(`有 ${res.inputGaps.length} 段完全收不到输入（最长 ${worst}ms）`
@@ -527,7 +523,6 @@
       `输入 触摸${res.taps} 命中${res.counts[0] + res.counts[1]} 打空${res.emptyTaps} 容错救回${res.assistHits} 暂停丢弃${res.stateDrops}`,
       `原始事件 按下${r.ts || 0} 移动${r.tm || 0} 抬起${r.te || 0} 取消${r.tc || 0} 指针${r.pd || 0} 被过滤${r.skipped || 0} 最多${res.maxFingers || 0}指`,
       `原始空档 ${(res.rawGaps || []).map((x) => x[1] + 'ms').join(' ') || '无'}`,
-      `断流误伤 ${res.starve ? res.starve.miss + '个MISS 剔除后' + (res.starve.accuracy * 100).toFixed(2) + '%' : '无'}`,
       `输入空档 ${(res.inputGaps || []).map((x) => x.ms + 'ms').join(' ') || '无'}`,
       `帧 卡顿${(res.stalls || []).length}次 最长${res.maxGap || 0}ms 我的代码${res.maxFrameDur}ms 代码之外${res.maxOutside}ms`,
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
@@ -698,6 +693,15 @@
       });
     }
 
+    /* 只有原生壳里才有这个开关：给 ROM 的多指手势检测做 A/B 用 */
+    if (window.RLShell && window.RLShell.setSecure) {
+      $('secureWrap').classList.remove('hidden');
+      const cb = $('blockGestures');
+      cb.checked = !!state.game.blockGestures;
+      const apply = () => { try { RLShell.setSecure(cb.checked); } catch (e) {} };
+      cb.onchange = () => { state.game.blockGestures = cb.checked; apply(); saveState(); };
+      apply();
+    }
     for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoCalibrate', 'autoFullscreen', 'minimalFx', 'inputDebug']) {
       if (!$(id)) continue;
       $(id).checked = !!state.game[id];

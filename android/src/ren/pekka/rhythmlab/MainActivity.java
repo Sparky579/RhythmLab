@@ -43,6 +43,7 @@ public class MainActivity extends Activity {
     private static final float MOVE_EPS_DP = 6f;
 
     private float density = 2f;
+    private boolean secure = false;
     private final SparseFloats lastSentX = new SparseFloats();
 
     @Override
@@ -56,6 +57,7 @@ public class MainActivity extends Activity {
         st.setJavaScriptEnabled(true);
         st.setDomStorageEnabled(true);
         st.setMediaPlaybackRequiresUserGesture(false);
+        web.addJavascriptInterface(new Shell(), "RLShell");
         st.setSupportZoom(false);
         st.setBuiltInZoomControls(false);
         st.setCacheMode(WebSettings.LOAD_NO_CACHE);
@@ -115,6 +117,24 @@ public class MainActivity extends Activity {
         if (path.endsWith(".svg")) return "image/svg+xml";
         if (path.endsWith(".png")) return "image/png";
         return "application/octet-stream";
+    }
+
+    /** 有些 ROM 的三指截屏/多指手势检测会在识别期间把触摸从 App 手里扣住，
+     *  表现就是多指连点时整段收不到事件。窗口标为 SECURE 后截屏被禁，
+     *  这类检测在部分 ROM 上会直接不再拦截。是实验开关，不是常规设置。 */
+    public final class Shell {
+        @android.webkit.JavascriptInterface
+        public void setSecure(final boolean on) {
+            runOnUiThread(new Runnable() { public void run() { applySecure(on); } });
+        }
+        @android.webkit.JavascriptInterface
+        public boolean isSecure() { return secure; }
+    }
+
+    private void applySecure(boolean on) {
+        secure = on;
+        if (on) getWindow().addFlags(WindowManager.LayoutParams.FLAG_SECURE);
+        else getWindow().clearFlags(WindowManager.LayoutParams.FLAG_SECURE);
     }
 
     private void applyImmersive() {
