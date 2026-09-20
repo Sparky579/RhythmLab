@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '25';
+  const BUILD = '26';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -411,6 +411,19 @@
       const total = Math.round(b.reduce((a, x) => a + x.ms, 0) / 100) / 10;
       warn.push(`检测到 ${b.length} 段连续打空（共 ${total} 秒、${b.reduce((a, x) => a + x.taps, 0)} 次触摸没打中任何音符），`
         + `最长一段 ${(Math.max.apply(null, b.map((x) => x.ms)) / 1000).toFixed(1)} 秒`);
+    }
+    // 原始事件空档：浏览器有没有连续一段时间不派发触摸事件。
+    // 这一项最关键——它能把「事件没来」和「事件来了但判定/渲染出问题」彻底分开。
+    if (res.rawGaps && res.rawGaps.length) {
+      const worst = Math.max.apply(null, res.rawGaps.map((x) => x[1]));
+      warn.push(`浏览器有 ${res.rawGaps.length} 段完全没有派发任何触摸事件（最长 ${worst}ms）。`
+        + `这期间页面本身在正常跑，是事件根本没送进来`);
+    }
+    if (res.raw) {
+      const r = res.raw;
+      warn.push(`原始事件计数 按下${r.ts} 移动${r.tm} 抬起${r.te} 取消${r.tc}`
+        + (r.tc > 0 ? '（有 touchcancel：系统或浏览器中途接管了手势）' : '')
+        + (r.skipped > 0 ? ` 被过滤${r.skipped}` : ''));
     }
     if (res.inputGaps && res.inputGaps.length) {
       const worst = Math.max.apply(null, res.inputGaps.map((x) => x.ms));

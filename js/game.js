@@ -142,6 +142,28 @@
 
     /* ---------- 输入绑定 ---------- */
     _bind() {
+      // 在 window 捕获阶段只做计数，不做任何处理。这是判断「事件到底有没有来」
+      // 的唯一可靠手段：它早于我自己的监听器，也不受 skip() 过滤影响。
+      this.raw = { ts: 0, tm: 0, te: 0, tc: 0, pd: 0, skipped: 0 };
+      this.lastRawAt = 0;
+      this.rawGaps = [];
+      const count = (k) => (e) => {
+        const now = performance.now();
+        // 上一次原始事件到现在的空档：>700ms 记一笔。
+        // 这是「浏览器压根没派发事件」的直接证据，与渲染、判定都无关。
+        if (this.lastRawAt && this.state === 'playing' && now - this.lastRawAt > 700) {
+          this.rawGaps.push([Math.round(this.chartTime(now) * 1000), Math.round(now - this.lastRawAt)]);
+          if (this.rawGaps.length > 40) this.rawGaps.shift();
+        }
+        this.raw[k]++;
+        this.lastRawAt = now;
+      };
+      for (const [type, key] of [['touchstart', 'ts'], ['touchmove', 'tm'],
+                                 ['touchend', 'te'], ['touchcancel', 'tc'],
+                                 ['pointerdown', 'pd']]) {
+        window.addEventListener(type, count(key), { capture: true, passive: true });
+      }
+
       // 监听整个游戏层而不是 canvas：即使某一下点到了 canvas 以外的位置也不会丢
       const root = this.canvas.parentElement || this.canvas;
       const skip = (e) => {
@@ -151,7 +173,7 @@
       const each = (list, fn) => { for (let i = 0; i < list.length; i++) fn(list[i]); };
 
       root.addEventListener('touchstart', (e) => {
-        if (skip(e)) return;
+        if (skip(e)) { this.raw.skipped++; return; }
         if (e.cancelable) e.preventDefault();
         this.lastTouchAt = performance.now();
         // 原生壳在转发触摸：DOM 这一路让位。但如果原生事件迟迟不来，
@@ -766,6 +788,7 @@
         resizeCount: this.resizeCount || 0, canvasAllocs: this.canvasAllocs || 0,
         maxFrameDur: Math.round(this.maxFrameDur), maxOutside: Math.round(this.maxOutside),
         frameHist: Array.from(this.frameHist),
+        raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
@@ -1048,6 +1071,9 @@
           `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`,
           `本帧 绘制${this.lastPhase.draw.toFixed(1)} 音频${this.lastPhase.sched.toFixed(1)} 逻辑${this.lastPhase.logic.toFixed(1)}ms`,
           `最长: 我的代码 ${Math.round(this.maxFrameDur)}ms   代码之外 ${Math.round(this.maxOutside)}ms`,
+          `原始事件 按下${this.raw.ts} 移动${this.raw.tm} 抬起${this.raw.te}`
+            + ` 取消${this.raw.tc}   被过滤${this.raw.skipped}`,
+          `距上次原始事件 ${this.lastRawAt ? Math.round(perfNow - this.lastRawAt) : '-'}ms`,
           `连续掉帧最长 ${(this.worstRunMs / 1000).toFixed(1)}s / ${this.worstRunFrames} 帧`
             + `   帧分布 ${this.frameHist[0]}/${this.frameHist[1]}/${this.frameHist[2]}/${this.frameHist[3]}/${this.frameHist[4]}`
             + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),
