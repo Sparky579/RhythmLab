@@ -397,6 +397,12 @@
     if (res.assistHits) line += ` · 边缘容错救回 ${res.assistHits}`;
     if (res.stateDrops) line += ` · 暂停期丢弃 ${res.stateDrops}`;
     const warn = [];
+    if (res.blackouts && res.blackouts.length) {
+      const b = res.blackouts;
+      const total = Math.round(b.reduce((a, x) => a + x.ms, 0) / 100) / 10;
+      warn.push(`检测到 ${b.length} 段连续打空（共 ${total} 秒、${b.reduce((a, x) => a + x.taps, 0)} 次触摸没打中任何音符），`
+        + `最长一段 ${(Math.max.apply(null, b.map((x) => x.ms)) / 1000).toFixed(1)} 秒`);
+    }
     if (res.taps < hits) warn.push('输入次数少于命中数：有触摸事件没送到页面');
     if (res.tsAnomalies) {
       warn.push(`检测到 ${res.tsAnomalies} 次事件时间戳基准异常，已自动改用系统时钟`);

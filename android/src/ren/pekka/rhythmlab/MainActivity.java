@@ -118,6 +118,25 @@ public class MainActivity extends Activity {
     }
 
     private void applyImmersive() {
+        // API 30+ 用新的 WindowInsetsController：系统栏只在滑动时临时出现，
+        // 松手立刻缩回去，减少误触到通知栏 / 导航栏的机会。反射调用是因为这里编译到 API 23。
+        if (Build.VERSION.SDK_INT >= 30) {
+            try {
+                Object c = getWindow().getClass()
+                        .getMethod("getInsetsController").invoke(getWindow());
+                if (c != null) {
+                    Class<?> t = Class.forName("android.view.WindowInsets$Type");
+                    int bars = (Integer) t.getMethod("systemBars").invoke(null);
+                    c.getClass().getMethod("hide", int.class).invoke(c, bars);
+                    c.getClass().getMethod("setSystemBarsBehavior", int.class)
+                            .invoke(c, 2 /* BEHAVIOR_SHOW_TRANSIENT_BARS_BY_SWIPE */);
+                }
+                getWindow().getClass().getMethod("setDecorFitsSystemWindows", boolean.class)
+                        .invoke(getWindow(), Boolean.FALSE);
+            } catch (Throwable ignored) {
+                // 拿不到就退回老的 SYSTEM_UI_FLAG 那套
+            }
+        }
         getWindow().getDecorView().setSystemUiVisibility(
                 View.SYSTEM_UI_FLAG_LAYOUT_STABLE
                         | View.SYSTEM_UI_FLAG_LAYOUT_HIDE_NAVIGATION
@@ -136,7 +155,8 @@ public class MainActivity extends Activity {
         try {
             int w = web.getWidth(), h = web.getHeight();
             if (w <= 0 || h <= 0) return;
-            int band = Math.round(48 * density);
+            // 安卓允许每条边最多 200dp 的排除区，这里取 64dp，横竖屏都按当前宽高重算
+            int band = Math.round(64 * density);
             List<Rect> rects = new ArrayList<Rect>();
             rects.add(new Rect(0, 0, Math.min(band, w), h));
             rects.add(new Rect(Math.max(0, w - band), 0, w, h));

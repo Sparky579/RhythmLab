@@ -208,6 +208,29 @@
       return mapped > now ? now : mapped;
     }
 
+    /* 原生壳直采的触摸：type 为 d/m/u，x 是 CSS 像素，age 是事件排队了多久。
+       用 performance.now() - age 还原真实按下时刻，精度不受 WebView 事件管线影响。 */
+    nativeTouch(type, id, cssX, ageMs) {
+      this.nativeSeen++;
+      this.lastNativeAt = performance.now();
+      this.nativeMode = true;
+      const ts = this.lastNativeAt - (+ageMs || 0);
+      const key = 'n' + id;
+      if (type === 'u') { this.touches.delete(key); return; }
+      const pos = this._lanePos(+cssX);
+      if (type === 'd') {
+        this.touches.set(key, { lane: pos.lane, x: +cssX });
+        this.inputLane(pos.lane, ts, pos.frac);
+      } else if (type === 'm') {
+        const prev = this.touches.get(key);
+        if (!prev) return;
+        if (pos.lane !== prev.lane && Math.abs(+cssX - prev.x) > this.laneW * 0.45) {
+          prev.lane = pos.lane; prev.x = +cssX;
+          this.inputLane(pos.lane, ts, pos.frac);
+        }
+      }
+    }
+
     /* canvas 位置可能因地址栏收起、旋转等变化，定期重新量一次，避免按到错误的轨 */
     _rect() {
       const now = performance.now();
@@ -620,6 +643,7 @@
         tsAnomalies: this.tsAnomalies, stateDrops: this.stateDrops,
         nativeMode: this.nativeMode, nativeSeen: this.nativeSeen,
         inputLog: this.inputLog.slice(-400), clockDelta: this.clockDelta,
+        blackouts: this.blackouts(1200, 5),
         suggestOffset: this.offCount >= 12
           ? Math.round(this.settings.offsetMs + this.offSum / this.offCount) : null,
         autoplay: !!this.settings.autoplay,
@@ -627,6 +651,40 @@
         segments: this._segmentStats(),
         chart: this.chart,
       };
+    }
+
+    /* 最近 ms 毫秒内的触摸与命中，断触发生时一眼能看见 */
+    _recentInput(ms) {
+      const nowCt = this.chartTime(performance.now()) * 1000;
+      let taps = 0, hits = 0;
+      for (let i = this.inputLog.length - 1; i >= 0; i--) {
+        const e = this.inputLog[i];
+        if (nowCt - e[0] > ms) break;
+        taps++;
+        if (e[2] !== null) hits++;
+      }
+      return { taps, hits };
+    }
+
+    /* 从输入日志里找「有触摸但连续一段完全没中」的区间，用来抓断触 */
+    blackouts(minMs, minTaps) {
+      const out = [];
+      let start = null, count = 0, lastT = 0;
+      for (const e of this.inputLog) {
+        if (e[2] === null) {                       // 这一下打空
+          if (start === null) start = e[0];
+          count++; lastT = e[0];
+        } else {
+          if (start !== null && lastT - start >= minMs && count >= minTaps) {
+            out.push({ at: start, ms: lastT - start, taps: count });
+          }
+          start = null; count = 0;
+        }
+      }
+      if (start !== null && lastT - start >= minMs && count >= minTaps) {
+        out.push({ at: start, ms: lastT - start, taps: count });
+      }
+      return out;
     }
 
     /* 按 BPM 分段统计准确率：挑战模式用来看在哪一档开始崩 */
@@ -835,11 +893,15 @@
 
       if (this.settings.inputDebug) {
         const hits = this.counts[0] + this.counts[1];
+        const recent = this._recentInput(3000);
         const lines = [
           `触摸/按键 ${this.taps}   命中 ${hits}   打空 ${this.emptyTaps}`
             + (this.settings.autoplay ? '   [自动演奏]' : ''),
           `按住中 ${this.touches.size}   边缘救回 ${this.assistHits}   暂停期丢弃 ${this.stateDrops}`,
-          `输入通道 ${this.nativeMode ? '原生直采 (' + this.nativeSeen + ')' : '浏览器 DOM'}`,
+          `输入通道 ${this.nativeMode ? '原生直采 (' + this.nativeSeen + ')' : '浏览器 DOM'}`
+            + (this.clockDelta === null ? '' : `   时钟偏移 ${this.clockDelta.toFixed(0)}ms`),
+          `近 3 秒 触摸 ${recent.taps} 命中 ${recent.hits}`
+            + (recent.taps >= 4 && recent.hits === 0 ? '   ← 连续打空！' : ''),
           `上次偏差 ${this.lastDt === null ? '打空' : (this.lastDt > 0 ? '+' : '') + this.lastDt.toFixed(0) + 'ms'}`
             + (this.offCount ? `   平均 ${(this.offSum / this.offCount > 0 ? '+' : '')}${(this.offSum / this.offCount).toFixed(0)}ms` : '')
             + (this.tsAnomalies ? `   时间戳异常 ${this.tsAnomalies}` : ''),
