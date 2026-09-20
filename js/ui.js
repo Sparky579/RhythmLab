@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '28';
+  const BUILD = '29';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -693,14 +693,22 @@
       });
     }
 
-    /* 只有原生壳里才有这个开关：给 ROM 的多指手势检测做 A/B 用 */
-    if (window.RLShell && window.RLShell.setSecure) {
+    /* 只有原生壳里才有这个开关：给 ROM 的多指手势检测做 A/B 用。
+       壳里但桥没注入上时，把开关显出来并置灰，免得静悄悄什么都不出现。 */
+    const inShell = /RhythmLabShell/.test(navigator.userAgent);
+    const bridge = !!(window.RLShell && window.RLShell.setSecure);
+    if (bridge || inShell) {
       $('secureWrap').classList.remove('hidden');
       const cb = $('blockGestures');
-      cb.checked = !!state.game.blockGestures;
-      const apply = () => { try { RLShell.setSecure(cb.checked); } catch (e) {} };
-      cb.onchange = () => { state.game.blockGestures = cb.checked; apply(); saveState(); };
-      apply();
+      if (!bridge) {
+        cb.disabled = true;
+        $('secureWrap').querySelector('.hint').textContent = '当前 APK 不支持这个开关，请重新下载安装。';
+      } else {
+        cb.checked = !!state.game.blockGestures;
+        const apply = () => { try { RLShell.setSecure(cb.checked); } catch (e) { /* ignore */ } };
+        cb.onchange = () => { state.game.blockGestures = cb.checked; apply(); saveState(); };
+        apply();
+      }
     }
     for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoCalibrate', 'autoFullscreen', 'minimalFx', 'inputDebug']) {
       if (!$(id)) continue;

@@ -134,6 +134,15 @@ details.adv summary { cursor: pointer; color: var(--muted); font-size: 13px; mar
 }
 .challenge-box .hint { color: var(--accent2); }
 
+.gesture-box {
+  margin: 0 0 14px; padding: 10px 12px 4px;
+  background: rgba(255, 184, 107, 0.08);
+  border: 1px solid rgba(255, 184, 107, 0.35);
+  border-radius: 12px;
+}
+.gesture-box .check { margin-bottom: 2px; }
+.gesture-box .hint { color: #ffb86b; }
+
 .start-block {
   margin-top: 16px; padding-top: 14px;
   border-top: 1px solid var(--panel-border);

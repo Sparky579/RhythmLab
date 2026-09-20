@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="css/style.css?v=28" />
+  <link rel="stylesheet" href="css/style.css?v=29" />
 </head>
 <body>
   <!-- 设置页 -->
@@ -86,6 +86,11 @@
       </section>
 
       <section class="panel">
+        <div class="gesture-box hidden" id="secureWrap">
+          <label class="check"><input type="checkbox" id="blockGestures" /> <b>屏蔽系统多指手势</b></label>
+          <p class="hint">多指连点时整段收不到触摸，多半是 ROM 的三指手势检测把事件扣住了。
+            打开后本窗口禁止截屏，这类检测在部分机型上会放手。开着打一局、关着打一局，对比左上角的「距上次」。</p>
+        </div>
         <h2>参数</h2>
         <div class="field">
           <label>键位模式</label>
@@ -211,7 +216,6 @@
             <label class="check"><input type="checkbox" id="autoCalibrate" /> 每局自动套用判定偏移</label>
             <label class="check"><input type="checkbox" id="autoFullscreen" checked /> 开始时自动全屏</label>
             <label class="check"><input type="checkbox" id="inputDebug" /> 输入诊断（排查断触）</label>
-            <label class="check hidden" id="secureWrap"><input type="checkbox" id="blockGestures" /> 屏蔽系统多指手势（试验，会禁止截屏）</label>
             <label class="check"><input type="checkbox" id="lowLatency" /> 低延迟画布（部分设备会卡顿）</label>
             <label class="check"><input type="checkbox" id="minimalFx" /> 极简画面（去掉拍线与特效）</label>
             <label class="check"><input type="checkbox" id="missOnEmpty" /> 空打判 Miss（断连）</label>
@@ -263,12 +267,12 @@
     </div>
   </div>
 
-  <script src="js/rng.js?v=28"></script>
-  <script src="js/generator.js?v=28"></script>
-  <script src="js/bgm.js?v=28"></script>
-  <script src="js/audio.js?v=28"></script>
-  <script src="js/game.js?v=28"></script>
-  <script src="js/ui.js?v=28"></script>
+  <script src="js/rng.js?v=29"></script>
+  <script src="js/generator.js?v=29"></script>
+  <script src="js/bgm.js?v=29"></script>
+  <script src="js/audio.js?v=29"></script>
+  <script src="js/game.js?v=29"></script>
+  <script src="js/ui.js?v=29"></script>
   <script>
   /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
   if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
@@ -281,7 +285,7 @@
   /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
      不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
   (function () {
-    var WANT = '28';
+    var WANT = '29';
     var MG = window.MG || {};
     var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
     if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }

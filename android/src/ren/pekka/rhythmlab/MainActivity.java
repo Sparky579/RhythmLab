@@ -58,6 +58,8 @@ public class MainActivity extends Activity {
         st.setDomStorageEnabled(true);
         st.setMediaPlaybackRequiresUserGesture(false);
         web.addJavascriptInterface(new Shell(), "RLShell");
+        // UA 打个标记：页面据此知道自己跑在原生壳里，桥没注入上时也能把问题显出来
+        st.setUserAgentString(st.getUserAgentString() + " RhythmLabShell/2");
         st.setSupportZoom(false);
         st.setBuiltInZoomControls(false);
         st.setCacheMode(WebSettings.LOAD_NO_CACHE);
