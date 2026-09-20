@@ -44,16 +44,27 @@ for (var i = 0; i < 4; i++) {
 
 var c = { d: 0, m: 0, u: 0, x: 0 };   // 按下 / 移动 / 抬起 / 取消
 var last = 0, maxGap = 0, gaps = [], times = [], started = 0, maxFingers = 0;
+var fingers = 0, fingersBefore = 0, rateBefore = 0;
+
+function rateNow(now) {
+  var n = 0;
+  for (var k = times.length - 1; k >= 0; k--) { if (now - times[k] > 1000) break; n++; }
+  return n;
+}
 
 function bump(k) {
   return function (e) {
     var now = performance.now();
     if (last && now - last > 500) {
       maxGap = Math.max(maxGap, now - last);
-      gaps.push(Math.round(now - last));
+      // fingersBefore / rateBefore 是断流「发生前一刻」的状态，才是触发条件
+      gaps.push({ ms: Math.round(now - last), f: fingersBefore, r: rateBefore });
       if (gaps.length > 12) gaps.shift();
     }
     last = now;
+    fingersBefore = fingers;
+    rateBefore = rateNow(now);
+    if (e.touches) fingers = e.touches.length;
     if (!started) started = now;
     c[k]++;
     times.push(now);
@@ -85,8 +96,7 @@ var frames = 0, fpsAt = performance.now(), fps = 0;
   frames++;
   if (now - fpsAt >= 500) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; }
 
-  var rate = 0;
-  for (var k = times.length - 1; k >= 0; k--) { if (now - times[k] > 1000) break; rate++; }
+  var rate = rateNow(now);
   var since = last ? Math.round(now - last) : 0;
 
   hud.innerHTML =
@@ -95,7 +105,10 @@ var frames = 0, fpsAt = performance.now(), fps = 0;
     + '速率 ' + rate + '/秒 &nbsp; 距上次 ' + since + 'ms &nbsp; 画面 ' + fps + 'fps<br>'
     + '最长断流 ' + Math.round(maxGap) + 'ms'
     + (since > 500 ? ' &nbsp; <span id="alarm">事件断流中…</span>' : '');
-  gapsEl.textContent = gaps.length ? '断流记录：' + gaps.join('ms, ') + 'ms' : '四指连续狂点 30 秒，看「最长断流」会不会冲到 1000ms 以上';
+  gapsEl.textContent = gaps.length
+    ? '断流（时长 / 断前手指数 / 断前速率）：'
+      + gaps.map(function (g) { return g.ms + 'ms·' + g.f + '指·' + g.r + '/秒'; }).join('   ')
+    : '先四指狂点 30 秒，再单指狂点 30 秒，对比哪种会断流';
   requestAnimationFrame(tick);
 })();
 </script>

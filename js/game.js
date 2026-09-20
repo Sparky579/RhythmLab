@@ -805,6 +805,7 @@
         frameHist: Array.from(this.frameHist),
         raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
         maxFingers: this.maxFingers,
+        starve: this._starveStats(),
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
@@ -813,6 +814,33 @@
         perfectMs: this.perfectMs, greatMs: this.greatMs,
         segments: this._segmentStats(),
         chart: this.chart,
+      };
+    }
+
+    /* 落在「输入断流」窗口里的 MISS：这些音符不是没打中，是系统没把手指送进来。
+       按谱面时间跟 rawGaps 的区间求交，算出一个剔除掉它们之后的准确率。 */
+    _starveStats() {
+      const g = this.rawGaps;
+      if (!g.length || !this.chart) return null;
+      const win = this.greatMs / 1000;
+      let miss = 0, total = 0;
+      for (let i = 0; i < this.chart.notes.length; i++) {
+        const t = this.chart.notes[i].t;
+        let inGap = false;
+        for (let k = 0; k < g.length; k++) {
+          const end = g[k][0] / 1000, start = end - g[k][1] / 1000;
+          if (t >= start - win && t <= end + win) { inGap = true; break; }
+        }
+        if (!inGap) continue;
+        total++;
+        if (this.judge[i] === 2) miss++;
+      }
+      if (!miss) return null;
+      const n = this.chart.notes.length;
+      const kept = n - miss;
+      return {
+        notes: total, miss,
+        accuracy: kept > 0 ? (this.scoreSum / kept) : 0,
       };
     }
 

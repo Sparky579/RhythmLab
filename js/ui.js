@@ -433,6 +433,10 @@
         + (r.tc > 0 ? '（有 touchcancel：系统或浏览器中途接管了手势）' : '')
         + (r.skipped > 0 ? ` 被过滤${r.skipped}` : ''));
     }
+    if (res.starve) {
+      warn.push(`有 ${res.starve.miss} 个 MISS 落在输入断流期间（系统没把手指送进来，不是你没打中）。`
+        + `剔除后准确率 ${(res.starve.accuracy * 100).toFixed(2)}%`);
+    }
     if (res.inputGaps && res.inputGaps.length) {
       const worst = Math.max.apply(null, res.inputGaps.map((x) => x.ms));
       warn.push(`有 ${res.inputGaps.length} 段完全收不到输入（最长 ${worst}ms）`
@@ -523,6 +527,7 @@
       `输入 触摸${res.taps} 命中${res.counts[0] + res.counts[1]} 打空${res.emptyTaps} 容错救回${res.assistHits} 暂停丢弃${res.stateDrops}`,
       `原始事件 按下${r.ts || 0} 移动${r.tm || 0} 抬起${r.te || 0} 取消${r.tc || 0} 指针${r.pd || 0} 被过滤${r.skipped || 0} 最多${res.maxFingers || 0}指`,
       `原始空档 ${(res.rawGaps || []).map((x) => x[1] + 'ms').join(' ') || '无'}`,
+      `断流误伤 ${res.starve ? res.starve.miss + '个MISS 剔除后' + (res.starve.accuracy * 100).toFixed(2) + '%' : '无'}`,
       `输入空档 ${(res.inputGaps || []).map((x) => x.ms + 'ms').join(' ') || '无'}`,
       `帧 卡顿${(res.stalls || []).length}次 最长${res.maxGap || 0}ms 我的代码${res.maxFrameDur}ms 代码之外${res.maxOutside}ms`,
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
