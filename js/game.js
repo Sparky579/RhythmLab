@@ -10,6 +10,8 @@
   const JUDGE_NAMES = ['PERFECT', 'GREAT', 'MISS'];
   const JUDGE_COLORS = ['#ffd75e', '#5ee8b0', '#ff5c7a'];
   const JUDGE_WEIGHT = [1, 0.5, 0];
+  /* 原始事件种类的中文名，断流前因显示用 */
+  const RAW_NAME = { ts: '按下', tm: '移动', te: '抬起', tc: '取消', pd: '指针' };
   const HAND_COLORS = ['#4fc8ff', '#ff6fae'];
   const THUMB_COLOR = '#b58cff';
   const NEUTRAL_COLOR = '#c9d4ff';
@@ -148,6 +150,8 @@
       this.raw = { ts: 0, tm: 0, te: 0, tc: 0, pd: 0, skipped: 0 };
       this.lastRawAt = 0;
       this.rawGaps = [];
+      this.rawLastType = '-';
+      this.fingersAtLast = 0;
       this.rawTimes = new Float64Array(256);   // 最近若干次原始事件的时刻，用来算实时速率
       this.rawN = 0;
       this.maxFingers = 0;
@@ -156,14 +160,22 @@
         // 上一次原始事件到现在的空档：>700ms 记一笔。
         // 这是「浏览器压根没派发事件」的直接证据，与渲染、判定都无关。
         if (this.lastRawAt && this.state === 'playing' && now - this.lastRawAt > 700) {
-          this.rawGaps.push([Math.round(this.chartTime(now) * 1000), Math.round(now - this.lastRawAt)]);
+          // 连断流「发生前一刻」的状态一起记：最后一个事件是什么、当时几根手指还在屏上。
+          // 断流前总是 touchcancel，就是系统把这串触摸抢走了；
+          // 断流前是 touchstart 且手指数不为 0，那是按着按着事件就没了。
+          this.rawGaps.push([Math.round(this.chartTime(now) * 1000), Math.round(now - this.lastRawAt),
+                             this.rawLastType, this.fingersAtLast]);
           if (this.rawGaps.length > 40) this.rawGaps.shift();
         }
         this.raw[k]++;
         this.lastRawAt = now;
+        this.rawLastType = k;
+        if (e.touches) {
+          this.fingersAtLast = e.touches.length;
+          if (e.touches.length > this.maxFingers) this.maxFingers = e.touches.length;
+        }
         this.rawTimes[this.rawN % 256] = now;
         this.rawN++;
-        if (e.touches && e.touches.length > this.maxFingers) this.maxFingers = e.touches.length;
       };
       for (const [type, key] of [['touchstart', 'ts'], ['touchmove', 'tm'],
                                  ['touchend', 'te'], ['touchcancel', 'tc'],
@@ -288,7 +300,8 @@
       /* 原生壳走的是 MotionEvent 直采，不经过 DOM 事件，单独并入断流统计 */
       if (this.lastRawAt && this.state === 'playing' && this.lastNativeAt - this.lastRawAt > 700) {
         this.rawGaps.push([Math.round(this.chartTime(this.lastNativeAt) * 1000),
-                           Math.round(this.lastNativeAt - this.lastRawAt)]);
+                           Math.round(this.lastNativeAt - this.lastRawAt),
+                           this.rawLastType, this.fingersAtLast]);
         if (this.rawGaps.length > 40) this.rawGaps.shift();
       }
       this.lastRawAt = this.lastNativeAt;
@@ -1107,7 +1120,12 @@
           `最长: 我的代码 ${Math.round(this.maxFrameDur)}ms   代码之外 ${Math.round(this.maxOutside)}ms`,
           `原始事件 按下${this.raw.ts} 抬起${this.raw.te} 取消${this.raw.tc}`
             + `   最多同时${this.maxFingers}指`,
-          `原生通道 ${this.nativeMode ? this.nativeSeen : '未启用'}`,
+          `原生通道 ${this.nativeMode ? this.nativeSeen : '未启用'}`
+            + (this.rawGaps.length
+              ? `   末次断流 ${this.rawGaps[this.rawGaps.length - 1][1]}ms`
+                + `(${RAW_NAME[this.rawGaps[this.rawGaps.length - 1][2]] || '?'}后,`
+                + `${this.rawGaps[this.rawGaps.length - 1][3]}指)`
+              : ''),
           `原始速率 ${this._rawRate(perfNow)}/秒`
             + `   距上次 ${this.lastRawAt ? Math.round(perfNow - this.lastRawAt) : '-'}ms`
             + (this.lastRawAt && perfNow - this.lastRawAt > 500 ? '  ← 事件断流！' : ''),

@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '31';
+  const BUILD = '32';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -438,6 +438,11 @@
         + (r.tc > 0 ? '（有 touchcancel：系统或浏览器中途接管了手势）' : '')
         + (r.skipped > 0 ? ` 被过滤${r.skipped}` : ''));
     }
+    const cancelGaps = (res.rawGaps || []).filter((x) => x[2] === 'tc').length;
+    if (cancelGaps) {
+      warn.push(`有 ${cancelGaps} 段断流紧跟在 touchcancel 之后 —— 是系统把这串触摸抢走了，`
+        + `不是页面没收到。多半是多指手势或边缘手势被触发。`);
+    }
     if (res.inputGaps && res.inputGaps.length) {
       const worst = Math.max.apply(null, res.inputGaps.map((x) => x.ms));
       warn.push(`有 ${res.inputGaps.length} 段完全收不到输入（最长 ${worst}ms）`
@@ -515,6 +520,8 @@
   }
 
   /* 把本局所有诊断数字拼成一段纯文本，方便直接发出来，不用人工抄 */
+  const RAW_NAME = { ts: '按下', tm: '移动', te: '抬起', tc: '取消', pd: '指针' };
+
   function diagText(res) {
     const c = res.chart, r = res.raw || {};
     const h = res.frameHist || [];
@@ -527,7 +534,9 @@
       `成绩 P${res.counts[0]} G${res.counts[1]} M${res.counts[2]} 连击${res.maxCombo}`,
       `输入 触摸${res.taps} 命中${res.counts[0] + res.counts[1]} 打空${res.emptyTaps} 容错救回${res.assistHits} 暂停丢弃${res.stateDrops}`,
       `原始事件 按下${r.ts || 0} 移动${r.tm || 0} 抬起${r.te || 0} 取消${r.tc || 0} 指针${r.pd || 0} 被过滤${r.skipped || 0} 最多${res.maxFingers || 0}指`,
-      `原始空档 ${(res.rawGaps || []).map((x) => x[1] + 'ms').join(' ') || '无'}`,
+      `原始空档 ${(res.rawGaps || []).map((x) =>
+        x[1] + 'ms(' + (RAW_NAME[x[2]] || '?') + '后,' + (x[3] === undefined ? '?' : x[3]) + '指)'
+      ).join(' ') || '无'}`,
       `输入空档 ${(res.inputGaps || []).map((x) => x.ms + 'ms').join(' ') || '无'}`,
       `帧 卡顿${(res.stalls || []).length}次 最长${res.maxGap || 0}ms 我的代码${res.maxFrameDur}ms 代码之外${res.maxOutside}ms`,
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
