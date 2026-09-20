@@ -8,9 +8,12 @@ class Handler(http.server.SimpleHTTPRequestHandler):
     extensions_map['.webmanifest'] = 'application/manifest+json'
     extensions_map['.ogg'] = 'audio/ogg'
     def end_headers(self):
-        # APK 与音频允许缓存，其余强制回源校验
+        # 音频与图标允许缓存，APK 与页面强制回源
         p = getattr(self, 'path', '')
-        if p.endswith(('.apk', '.ogg', '.png')):
+        # APK 不能缓存：之前就是因为这个，点下载永远拿到一天前的旧包
+        if p.endswith('.apk'):
+            self.send_header('Cache-Control', 'no-store, must-revalidate')
+        elif p.endswith(('.ogg', '.png')):
             self.send_header('Cache-Control', 'public, max-age=86400')
         else:
             self.send_header('Cache-Control', 'no-cache, must-revalidate')
