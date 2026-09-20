@@ -177,11 +177,15 @@ public class MainActivity extends Activity {
         try {
             int w = web.getWidth(), h = web.getHeight();
             if (w <= 0 || h <= 0) return;
-            // 安卓允许每条边最多 200dp 的排除区，这里取 64dp，横竖屏都按当前宽高重算
-            int band = Math.round(64 * density);
+            // 排除区的「沿边长度」每条边最多 200dp，超了系统只保留靠下的那 200dp。
+            // 与其让它自己截，不如直接指定靠下的 200dp —— 手指本来就落在判定线附近。
+            // 宽度方向不受这个上限约束，所以放宽到 110dp，把返回手势区整个盖住。
+            int band = Math.round(110 * density);
+            int reach = Math.round(200 * density);
+            int top = Math.max(0, h - reach);
             List<Rect> rects = new ArrayList<Rect>();
-            rects.add(new Rect(0, 0, Math.min(band, w), h));
-            rects.add(new Rect(Math.max(0, w - band), 0, w, h));
+            rects.add(new Rect(0, top, Math.min(band, w), h));
+            rects.add(new Rect(Math.max(0, w - band), top, w, h));
             Method m = View.class.getMethod("setSystemGestureExclusionRects", List.class);
             m.invoke(web, rects);
         } catch (Throwable ignored) {

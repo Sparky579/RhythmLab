@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '32';
+  const BUILD = '33';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -440,8 +440,15 @@
     }
     const cancelGaps = (res.rawGaps || []).filter((x) => x[2] === 'tc').length;
     if (cancelGaps) {
-      warn.push(`有 ${cancelGaps} 段断流紧跟在 touchcancel 之后 —— 是系统把这串触摸抢走了，`
-        + `不是页面没收到。多半是多指手势或边缘手势被触发。`);
+      const spots = res.cancelSpots || [];
+      const edge = spots.filter((x) => x <= 40).length;
+      warn.push(`有 ${cancelGaps} 段断流紧跟在 touchcancel 之后 —— 是系统抢走了这串触摸。`
+        + (spots.length
+          ? (edge >= spots.length / 2
+            ? `被取消的手指多数贴在屏幕边缘（${edge}/${spots.length} 次在 40px 内），是返回/导航手势。`
+              + `改用三键导航即可根除。`
+            : `被取消的手指不在边缘，是多指手势被触发。`)
+          : ''));
     }
     if (res.inputGaps && res.inputGaps.length) {
       const worst = Math.max.apply(null, res.inputGaps.map((x) => x.ms));
@@ -537,6 +544,7 @@
       `原始空档 ${(res.rawGaps || []).map((x) =>
         x[1] + 'ms(' + (RAW_NAME[x[2]] || '?') + '后,' + (x[3] === undefined ? '?' : x[3]) + '指)'
       ).join(' ') || '无'}`,
+      `取消位置 ${(res.cancelSpots || []).map((x) => x + 'px').join(' ') || '无'}（离最近的左右边缘）`,
       `输入空档 ${(res.inputGaps || []).map((x) => x.ms + 'ms').join(' ') || '无'}`,
       `帧 卡顿${(res.stalls || []).length}次 最长${res.maxGap || 0}ms 我的代码${res.maxFrameDur}ms 代码之外${res.maxOutside}ms`,
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,

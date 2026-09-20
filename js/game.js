@@ -152,6 +152,7 @@
       this.rawGaps = [];
       this.rawLastType = '-';
       this.fingersAtLast = 0;
+      this.cancelSpots = [];   // 每次 touchcancel 时，被取消的手指离左右边缘最近多少 px
       this.rawTimes = new Float64Array(256);   // 最近若干次原始事件的时刻，用来算实时速率
       this.rawN = 0;
       this.maxFingers = 0;
@@ -166,6 +167,17 @@
           this.rawGaps.push([Math.round(this.chartTime(now) * 1000), Math.round(now - this.lastRawAt),
                              this.rawLastType, this.fingersAtLast]);
           if (this.rawGaps.length > 40) this.rawGaps.shift();
+        }
+        if (k === 'tc' && e.changedTouches && this.W > 0) {
+          let near = Infinity;
+          for (let i = 0; i < e.changedTouches.length; i++) {
+            const x = e.changedTouches[i].clientX;
+            near = Math.min(near, x, this.W - x);
+          }
+          if (isFinite(near)) {
+            this.cancelSpots.push(Math.round(near));
+            if (this.cancelSpots.length > 40) this.cancelSpots.shift();
+          }
         }
         this.raw[k]++;
         this.lastRawAt = now;
@@ -824,7 +836,7 @@
         maxFrameDur: Math.round(this.maxFrameDur), maxOutside: Math.round(this.maxOutside),
         frameHist: Array.from(this.frameHist),
         raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
-        maxFingers: this.maxFingers,
+        maxFingers: this.maxFingers, cancelSpots: this.cancelSpots.slice(-20),
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
