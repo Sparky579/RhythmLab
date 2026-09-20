@@ -168,6 +168,13 @@
       // 真缩放会动到 visualViewport，系统手势不会 —— 用它把两者分开。
       this.vvEvents = 0;
       this.vvScaleMax = 1;
+      // 全屏进出会让系统栏动一下，边缘触摸在沉浸式下最容易触发它
+      this.fsChanges = 0;
+      this.lastFsAt = 0;
+      this.cancelNearFs = 0;
+      const onFs = () => { this.fsChanges++; this.lastFsAt = performance.now(); };
+      document.addEventListener('fullscreenchange', onFs);
+      document.addEventListener('webkitfullscreenchange', onFs);
       const vv = window.visualViewport;
       if (vv) {
         const note = () => {
@@ -199,6 +206,7 @@
             const x = e.changedTouches[i].clientX;
             near = Math.min(near, x, this.W - x);
           }
+          if (this.lastFsAt && now - this.lastFsAt < 300) this.cancelNearFs++;
           if (isFinite(near)) {
             this.cancelSpots.push(Math.round(near));
             if (this.cancelSpots.length > 40) this.cancelSpots.shift();
@@ -831,6 +839,9 @@
 
     _finish() {
       cancelAnimationFrame(this.raf);
+      // 退出全屏会让视口变化并重算轨道，事后再读就不是本局的值了
+      this.layoutSnap = { w: Math.round(this.W), laneW: Math.round(this.laneW),
+                          x0: Math.round(this.laneX0), gesture: this.edgeGestureCss };
       this.state = 'finished';
       if (this.onFinish) this.onFinish(this.results());
     }
@@ -872,6 +883,8 @@
         raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
         maxFingers: this.maxFingers, cancelSpots: this.cancelSpots.slice(-20),
         vvEvents: this.vvEvents, vvScaleMax: this.vvScaleMax,
+        fsChanges: this.fsChanges, cancelNearFs: this.cancelNearFs,
+        layout: this.layoutSnap || null,
         cancelCtx: this.cancelCtx.slice(-20),
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,

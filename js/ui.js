@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '40';
+  const BUILD = '41';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -518,7 +518,8 @@
       return `按下${n.down} 移动${n.move} 抬起${n.up} 取消${n.cancel}`
         + ` 最多${n.maxPointers}指 最长空档${n.maxGap}ms`
         + ` 派发耗时 平均${n.avgDispatchUs}us/最长${n.maxDispatchUs}us`
-        + ` JS调用${n.evalCalls}次`;
+        + ` JS调用${n.evalCalls}次`
+        + ` 系统栏变化${n.sysUi}次 取消紧跟其后${n.cancelNearSysUi}次`;
     } catch (e) { return '读取失败'; }
   }
 
@@ -546,8 +547,11 @@
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
       `送显滞后 ${(res.presentStalls || []).length}次 最长${res.maxRafLag}ms`,
       `视口 ${res.resizeCount}次 画布重建${res.canvasAllocs}次 时钟偏移${res.clockDelta === null ? '-' : Math.round(res.clockDelta)}ms 时间戳异常${res.tsAnomalies}`,
-      `轨道 宽${Math.round(MG.game.laneW)}px 起点${Math.round(MG.game.laneX0)}px`
-        + ` 手势区${MG.game.edgeGestureCss >= 0 ? MG.game.edgeGestureCss + 'px' : '未知'}`,
+      `轨道 ${res.layout
+        ? `屏宽${res.layout.w}px 轨宽${res.layout.laneW}px 起点${res.layout.x0}px`
+          + ` 手势区${res.layout.gesture >= 0 ? res.layout.gesture + 'px' : '未知'}`
+        : '未记录'}`,
+      `全屏变化 ${res.fsChanges}次   取消紧跟全屏变化 ${res.cancelNearFs}次`,
       `原生层动作 ${nativeStats()}`,
       `原生壳 ${window.__shell
         ? `手势排除${__shell.ok ? '已生效 ' + __shell.band : '失败(' + __shell.band + ')'}`

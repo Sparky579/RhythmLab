@@ -101,7 +101,13 @@ public class MainActivity extends Activity {
 
         View decor = getWindow().getDecorView();
         decor.setOnSystemUiVisibilityChangeListener(new View.OnSystemUiVisibilityChangeListener() {
-            @Override public void onSystemUiVisibilityChange(int visibility) { applyImmersive(); }
+            @Override public void onSystemUiVisibilityChange(int visibility) {
+                // 沉浸式下边缘触摸会让系统栏临时探头，这一下就会取消整串触摸。
+                // 数一下它发生了多少次，好和 touchcancel 对上。
+                sysUiChanges++;
+                lastSysUiAt = SystemClock.uptimeMillis();
+                applyImmersive();
+            }
         });
         decor.addOnLayoutChangeListener(new View.OnLayoutChangeListener() {
             @Override public void onLayoutChange(View v, int l, int t, int r, int b,
@@ -182,7 +188,7 @@ public class MainActivity extends Activity {
 
     /** 原生层收到的动作计数。页面看到的 touchcancel 如果在这里没有对应的
      *  ACTION_CANCEL，说明取消是 WebView 自己造出来的，不是安卓发的。 */
-    private int nDown, nMove, nUp, nCancel, nMaxPointers;
+    private int nDown, nMove, nUp, nCancel, nMaxPointers, nCancelNearSysUi;
     private long lastNativeAt, maxNativeGap;
 
     private void countNative(int action, MotionEvent ev) {
@@ -196,7 +202,14 @@ public class MainActivity extends Activity {
             case MotionEvent.ACTION_MOVE: nMove++; break;
             case MotionEvent.ACTION_UP:
             case MotionEvent.ACTION_POINTER_UP: nUp++; break;
-            case MotionEvent.ACTION_CANCEL: nCancel++; break;
+            case MotionEvent.ACTION_CANCEL:
+                nCancel++;
+                // 取消发生时，距上一次系统栏可见性变化多久：贴得越近越说明是它
+                if (lastSysUiAt != 0) {
+                    long d = now - lastSysUiAt;
+                    if (d < 300) nCancelNearSysUi++;
+                }
+                break;
             default: break;
         }
     }
@@ -208,6 +221,8 @@ public class MainActivity extends Activity {
             return "{\"down\":" + nDown + ",\"move\":" + nMove + ",\"up\":" + nUp
                     + ",\"cancel\":" + nCancel + ",\"maxPointers\":" + nMaxPointers
                     + ",\"maxGap\":" + maxNativeGap
+                    + ",\"sysUi\":" + sysUiChanges
+                    + ",\"cancelNearSysUi\":" + nCancelNearSysUi
                     + ",\"evalCalls\":" + evalCalls
                     + ",\"maxDispatchUs\":" + maxDispatchUs
                     + ",\"avgDispatchUs\":" + (dispatchCount > 0 ? dispatchTotalUs / dispatchCount : 0)
@@ -215,7 +230,8 @@ public class MainActivity extends Activity {
         }
         @android.webkit.JavascriptInterface
         public void reset() {
-            nDown = nMove = nUp = nCancel = nMaxPointers = 0;
+            nDown = nMove = nUp = nCancel = nMaxPointers = nCancelNearSysUi = 0;
+            sysUiChanges = 0; lastSysUiAt = 0;
             maxNativeGap = 0; lastNativeAt = 0;
             evalCalls = 0; maxDispatchUs = 0; dispatchTotalUs = 0; dispatchCount = 0;
         }
@@ -264,6 +280,8 @@ public class MainActivity extends Activity {
 
     private long maxDispatchUs, dispatchTotalUs;
     private int dispatchCount;
+    private int sysUiChanges;
+    private long lastSysUiAt;
 
     private void forward(MotionEvent ev) {
         if (web == null) return;
