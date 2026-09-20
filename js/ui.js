@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '26';
+  const BUILD = '27';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -387,6 +387,14 @@
       (res.autoplay ? '<br>自动演奏' : inputLine(res)) +
       calibLine(res) +
       challengeLine(res);
+    const dg = $('btnDiag');
+    if (dg) dg.onclick = () => {
+      const txt = diagText(res);
+      const done = () => { dg.textContent = '已复制，直接粘贴发出即可'; };
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(txt).then(done, () => showDiagBox(txt));
+      } else showDiagBox(txt);
+    };
     const cb = $('btnCalib');
     if (cb) cb.addEventListener('click', () => {
       const want = res.suggestOffset;
@@ -499,6 +507,44 @@
     }
     return `<br>本局平均偏${delta > 0 ? '早' : '晚'} ${Math.abs(delta)}ms，`
       + `<button type="button" id="btnCalib" class="link">要的话点这里把判定偏移调到 ${want} ms</button>`;
+  }
+
+  /* 把本局所有诊断数字拼成一段纯文本，方便直接发出来，不用人工抄 */
+  function diagText(res) {
+    const c = res.chart, r = res.raw || {};
+    const h = res.frameHist || [];
+    return [
+      `RhythmLab 诊断 v${BUILD}`,
+      `谱面 ${c.presetName} ${c.keys}K ${c.bpm}BPM 音符${res.total} 时长${Math.round(c.duration)}s`,
+      `判定 ${res.perfectMs}/${res.greatMs}ms 偏移${state.game.offsetMs}ms 余量${state.game.laneSlackPx}px`,
+      `画质 dpr上限${state.game.maxDpr} 实际${res.dpr}${res.autoDprCap ? '(自动降档)' : ''} 极简${state.game.minimalFx ? '开' : '关'} 低延迟画布${res.lowLatency ? '开' : '关'}`,
+      `音频 BGM=${state.game.bgm} 打击音${state.game.hitSound ? '开' : '关'}`,
+      `成绩 P${res.counts[0]} G${res.counts[1]} M${res.counts[2]} 连击${res.maxCombo}`,
+      `输入 触摸${res.taps} 命中${res.counts[0] + res.counts[1]} 打空${res.emptyTaps} 容错救回${res.assistHits} 暂停丢弃${res.stateDrops}`,
+      `原始事件 按下${r.ts || 0} 移动${r.tm || 0} 抬起${r.te || 0} 取消${r.tc || 0} 指针${r.pd || 0} 被过滤${r.skipped || 0} 最多${res.maxFingers || 0}指`,
+      `原始空档 ${(res.rawGaps || []).map((x) => x[1] + 'ms').join(' ') || '无'}`,
+      `输入空档 ${(res.inputGaps || []).map((x) => x.ms + 'ms').join(' ') || '无'}`,
+      `帧 卡顿${(res.stalls || []).length}次 最长${res.maxGap || 0}ms 我的代码${res.maxFrameDur}ms 代码之外${res.maxOutside}ms`,
+      `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
+      `送显滞后 ${(res.presentStalls || []).length}次 最长${res.maxRafLag}ms`,
+      `视口 ${res.resizeCount}次 画布重建${res.canvasAllocs}次 时钟偏移${res.clockDelta === null ? '-' : Math.round(res.clockDelta)}ms 时间戳异常${res.tsAnomalies}`,
+      `环境 ${navigator.userAgent}`,
+    ].join('\n');
+  }
+
+  /* 剪贴板不可用时，退回到一个可全选的文本框 */
+  function showDiagBox(txt) {
+    let box = $('diagBox');
+    if (!box) {
+      box = document.createElement('textarea');
+      box.id = 'diagBox';
+      box.readOnly = true;
+      box.style.cssText = 'width:100%;height:120px;margin-top:8px;background:rgba(0,0,0,.35);'
+        + 'color:var(--text);border:1px solid var(--panel-border);border-radius:8px;padding:8px;font-size:11px';
+      $('resMeta').parentElement.insertBefore(box, $('resChart'));
+    }
+    box.value = txt;
+    box.select();
   }
 
   function drawResultChart(res) {

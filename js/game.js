@@ -147,6 +147,9 @@
       this.raw = { ts: 0, tm: 0, te: 0, tc: 0, pd: 0, skipped: 0 };
       this.lastRawAt = 0;
       this.rawGaps = [];
+      this.rawTimes = new Float64Array(256);   // 最近若干次原始事件的时刻，用来算实时速率
+      this.rawN = 0;
+      this.maxFingers = 0;
       const count = (k) => (e) => {
         const now = performance.now();
         // 上一次原始事件到现在的空档：>700ms 记一笔。
@@ -157,6 +160,9 @@
         }
         this.raw[k]++;
         this.lastRawAt = now;
+        this.rawTimes[this.rawN % 256] = now;
+        this.rawN++;
+        if (e.touches && e.touches.length > this.maxFingers) this.maxFingers = e.touches.length;
       };
       for (const [type, key] of [['touchstart', 'ts'], ['touchmove', 'tm'],
                                  ['touchend', 'te'], ['touchcancel', 'tc'],
@@ -272,6 +278,15 @@
       this.nativeSeen++;
       this.lastNativeAt = performance.now();
       this.nativeMode = true;
+      /* 原生壳走的是 MotionEvent 直采，不经过 DOM 事件，单独并入断流统计 */
+      if (this.lastRawAt && this.state === 'playing' && this.lastNativeAt - this.lastRawAt > 700) {
+        this.rawGaps.push([Math.round(this.chartTime(this.lastNativeAt) * 1000),
+                           Math.round(this.lastNativeAt - this.lastRawAt)]);
+        if (this.rawGaps.length > 40) this.rawGaps.shift();
+      }
+      this.lastRawAt = this.lastNativeAt;
+      this.rawTimes[this.rawN % 256] = this.lastNativeAt;
+      this.rawN++;
       const ts = this.lastNativeAt - (+ageMs || 0);
       const key = 'n' + id;
       if (type === 'u') { this.touches.delete(key); return; }
@@ -789,6 +804,7 @@
         maxFrameDur: Math.round(this.maxFrameDur), maxOutside: Math.round(this.maxOutside),
         frameHist: Array.from(this.frameHist),
         raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
+        maxFingers: this.maxFingers,
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
@@ -798,6 +814,17 @@
         segments: this._segmentStats(),
         chart: this.chart,
       };
+    }
+
+    /* 最近 1 秒收到多少个原始触摸事件。数字掉到 0 就是事件没进来，与判定无关 */
+    _rawRate(perfNow) {
+      let c = 0;
+      const n = Math.min(this.rawN, 256);
+      for (let k = 1; k <= n; k++) {
+        if (perfNow - this.rawTimes[(this.rawN - k) % 256] > 1000) break;
+        c++;
+      }
+      return c;
     }
 
     /* 最近 ms 毫秒内的触摸与命中，断触发生时一眼能看见 */
@@ -1071,9 +1098,12 @@
           `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`,
           `本帧 绘制${this.lastPhase.draw.toFixed(1)} 音频${this.lastPhase.sched.toFixed(1)} 逻辑${this.lastPhase.logic.toFixed(1)}ms`,
           `最长: 我的代码 ${Math.round(this.maxFrameDur)}ms   代码之外 ${Math.round(this.maxOutside)}ms`,
-          `原始事件 按下${this.raw.ts} 移动${this.raw.tm} 抬起${this.raw.te}`
-            + ` 取消${this.raw.tc}   被过滤${this.raw.skipped}`,
-          `距上次原始事件 ${this.lastRawAt ? Math.round(perfNow - this.lastRawAt) : '-'}ms`,
+          `原始事件 按下${this.raw.ts} 抬起${this.raw.te} 取消${this.raw.tc}`
+            + `   最多同时${this.maxFingers}指`,
+          `原生通道 ${this.nativeMode ? this.nativeSeen : '未启用'}`,
+          `原始速率 ${this._rawRate(perfNow)}/秒`
+            + `   距上次 ${this.lastRawAt ? Math.round(perfNow - this.lastRawAt) : '-'}ms`
+            + (this.lastRawAt && perfNow - this.lastRawAt > 500 ? '  ← 事件断流！' : ''),
           `连续掉帧最长 ${(this.worstRunMs / 1000).toFixed(1)}s / ${this.worstRunFrames} 帧`
             + `   帧分布 ${this.frameHist[0]}/${this.frameHist[1]}/${this.frameHist[2]}/${this.frameHist[3]}/${this.frameHist[4]}`
             + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),

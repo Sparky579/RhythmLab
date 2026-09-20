@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, user-scalable=no" />
+<title>触摸断流测试</title>
+<style>
+  * { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+  html, body {
+    margin: 0; height: 100%; overflow: hidden; background: #0b0d17; color: #e8ecff;
+    font-family: system-ui, "PingFang SC", "Noto Sans SC", sans-serif;
+    touch-action: none; -webkit-user-select: none; user-select: none;
+  }
+  #hud { position: fixed; top: 0; left: 0; right: 0; padding: 8px 10px; font-size: 13px;
+         line-height: 1.6; font-variant-numeric: tabular-nums; z-index: 2;
+         padding-top: max(8px, env(safe-area-inset-top)); pointer-events: none; }
+  #alarm { color: #ff5c7a; font-weight: 700; }
+  #pads { position: fixed; inset: 0; display: flex; }
+  .pad { flex: 1; border-right: 1px solid rgba(255,255,255,.08); transition: background .05s; }
+  .pad:last-child { border-right: 0; }
+  .pad.on { background: rgba(122,162,255,.35); }
+  #gaps { position: fixed; left: 10px; right: 10px; bottom: 8px; font-size: 12px; color: #ffb86b;
+          padding-bottom: max(8px, env(safe-area-inset-bottom)); pointer-events: none; }
+</style>
+</head>
+<body>
+<div id="pads"></div>
+<div id="hud"></div>
+<div id="gaps"></div>
+<script>
+/* 只有这一件事：数 window 收到的原始触摸事件，并标出「多久没收到」。
+   没有画布、没有音频、没有判定、没有游戏逻辑。
+   如果这一页也会断流，那就跟 RhythmLab 的代码无关。 */
+var pads = document.getElementById('pads');
+var hud = document.getElementById('hud');
+var gapsEl = document.getElementById('gaps');
+var els = [];
+for (var i = 0; i < 4; i++) {
+  var d = document.createElement('div');
+  d.className = 'pad';
+  pads.appendChild(d);
+  els.push(d);
+}
+
+var c = { d: 0, m: 0, u: 0, x: 0 };   // 按下 / 移动 / 抬起 / 取消
+var last = 0, maxGap = 0, gaps = [], times = [], started = 0, maxFingers = 0;
+
+function bump(k) {
+  return function (e) {
+    var now = performance.now();
+    if (last && now - last > 500) {
+      maxGap = Math.max(maxGap, now - last);
+      gaps.push(Math.round(now - last));
+      if (gaps.length > 12) gaps.shift();
+    }
+    last = now;
+    if (!started) started = now;
+    c[k]++;
+    times.push(now);
+    if (times.length > 300) times.shift();
+    if (e.touches && e.touches.length > maxFingers) maxFingers = e.touches.length;
+  };
+}
+addEventListener('touchstart', bump('d'), { capture: true, passive: true });
+addEventListener('touchmove', bump('m'), { capture: true, passive: true });
+addEventListener('touchend', bump('u'), { capture: true, passive: true });
+addEventListener('touchcancel', bump('x'), { capture: true, passive: true });
+
+/* 高亮只是给手指一点反馈，不参与统计 */
+addEventListener('touchstart', paint, { passive: true });
+addEventListener('touchend', paint, { passive: true });
+addEventListener('touchcancel', paint, { passive: true });
+function paint(e) {
+  for (var i = 0; i < 4; i++) els[i].classList.remove('on');
+  for (var j = 0; j < e.touches.length; j++) {
+    var k = Math.floor(e.touches[j].clientX / innerWidth * 4);
+    if (els[k]) els[k].classList.add('on');
+  }
+}
+document.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
+
+var frames = 0, fpsAt = performance.now(), fps = 0;
+(function tick() {
+  var now = performance.now();
+  frames++;
+  if (now - fpsAt >= 500) { fps = Math.round(frames * 1000 / (now - fpsAt)); frames = 0; fpsAt = now; }
+
+  var rate = 0;
+  for (var k = times.length - 1; k >= 0; k--) { if (now - times[k] > 1000) break; rate++; }
+  var since = last ? Math.round(now - last) : 0;
+
+  hud.innerHTML =
+    '按下 ' + c.d + ' &nbsp; 移动 ' + c.m + ' &nbsp; 抬起 ' + c.u + ' &nbsp; 取消 ' + c.x
+    + ' &nbsp; 最多' + maxFingers + '指<br>'
+    + '速率 ' + rate + '/秒 &nbsp; 距上次 ' + since + 'ms &nbsp; 画面 ' + fps + 'fps<br>'
+    + '最长断流 ' + Math.round(maxGap) + 'ms'
+    + (since > 500 ? ' &nbsp; <span id="alarm">事件断流中…</span>' : '');
+  gapsEl.textContent = gaps.length ? '断流记录：' + gaps.join('ms, ') + 'ms' : '四指连续狂点 30 秒，看「最长断流」会不会冲到 1000ms 以上';
+  requestAnimationFrame(tick);
+})();
+</script>
+</body>
+</html>
