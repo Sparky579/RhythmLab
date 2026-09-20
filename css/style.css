@@ -26,7 +26,10 @@ html, body {
   overscroll-behavior: none;
 }
 body { min-height: 100vh; }
-/* 游戏中锁住页面：避免手机地址栏收放导致视口变化、判定线跳动 */
+/* 游戏中锁住页面：避免手机地址栏收放导致视口变化、判定线跳动。
+   touch-action 要一路铺到根元素：只写在 #play 上的话，根滚动器那一层
+   仍然armed，浏览器照样会为了判断缩放/双击而接管多指触摸并发 touchcancel。 */
+html.playing, body.playing { touch-action: none; }
 body.playing { position: fixed; inset: 0; width: 100%; height: 100%; overflow: hidden; }
 button, input, select { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; font-weight: 700; }
@@ -133,6 +136,13 @@ details.adv summary { cursor: pointer; color: var(--muted); font-size: 13px; mar
   border-radius: 12px;
 }
 .challenge-box .hint { color: var(--accent2); }
+
+.ua-warn {
+  margin: 0 0 14px; padding: 12px 14px;
+  background: rgba(255, 92, 122, 0.12);
+  border: 1px solid rgba(255, 92, 122, 0.45);
+  border-radius: 12px; color: #ffb0c0; font-size: 13px; line-height: 1.6;
+}
 
 .gesture-box {
   margin: 0 0 14px; padding: 10px 12px 4px;

@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '35';
+  const BUILD = '36';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -76,8 +76,31 @@
   }
 
   function lockScroll(on) {
-    if (on) { scrollSave = window.scrollY || 0; document.body.classList.add('playing'); }
-    else { document.body.classList.remove('playing'); window.scrollTo(0, scrollSave); }
+    // 根元素也要加：touch-action 只写在子树上，根滚动器那层仍然会为了
+    // 判断缩放/双击而接管多指触摸，接管的表现就是 touchcancel。
+    const root = document.documentElement;
+    if (on) {
+      scrollSave = window.scrollY || 0;
+      document.body.classList.add('playing'); root.classList.add('playing');
+    } else {
+      document.body.classList.remove('playing'); root.classList.remove('playing');
+      window.scrollTo(0, scrollSave);
+    }
+  }
+
+  /* 桌面模式（请求桌面版网站）下 Chrome 会无视 user-scalable=no，
+     页面变成可缩放，多指触摸就会被缩放手势检测接管并作废。
+     UA 自称桌面、却带着多点触摸，就是这种情况。 */
+  function desktopModeOn() {
+    if (!/Macintosh|Windows NT|X11/.test(navigator.userAgent)) return false;
+    if (/Mobile|Android/.test(navigator.userAgent)) return false;
+    if (!(navigator.maxTouchPoints > 0)) return false;
+    // 触屏笔记本也是「桌面 UA + 有触点」，但它还接着鼠标；
+    // 手机开桌面模式则只有粗指针，用这个把两者分开。
+    try {
+      if (window.matchMedia('(any-pointer: fine)').matches) return false;
+    } catch (e) { /* 不支持就按命中处理 */ }
+    return true;
   }
 
   /* ---------- 预设卡片 ---------- */
@@ -438,6 +461,10 @@
         + (r.tc > 0 ? '（有 touchcancel：系统或浏览器中途接管了手势）' : '')
         + (r.skipped > 0 ? ` 被过滤${r.skipped}` : ''));
     }
+    if (desktopModeOn()) {
+      warn.push('浏览器开着「请求桌面版网站」：此时 user-scalable=no 会被无视，'
+        + '页面变成可缩放，多指触摸就会被缩放手势检测接管并作废。请先关掉它再测。');
+    }
     const cancelGaps = (res.rawGaps || []).filter((x) => x[2] === 'tc').length;
     if (cancelGaps) {
       const spots = res.cancelSpots || [];
@@ -532,6 +559,16 @@
   /* 把本局所有诊断数字拼成一段纯文本，方便直接发出来，不用人工抄 */
   const RAW_NAME = { ts: '按下', tm: '移动', te: '抬起', tc: '取消', pd: '指针' };
 
+  function warnDesktopMode() {
+    const el = $('uaWarn');
+    if (!el || !desktopModeOn()) return;
+    el.classList.remove('hidden');
+    el.innerHTML = '<b>检测到「请求桌面版网站」已开启。</b>'
+      + '这会让浏览器无视页面的禁止缩放，把多指触摸当成缩放手势接管并作废，'
+      + '表现就是四指连点时整段收不到触摸、却什么都不弹出来。'
+      + '请在浏览器菜单里取消勾选「桌面版网站」，或改用安卓 App。';
+  }
+
   function diagText(res) {
     const c = res.chart, r = res.raw || {};
     const h = res.frameHist || [];
@@ -556,6 +593,7 @@
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
       `送显滞后 ${(res.presentStalls || []).length}次 最长${res.maxRafLag}ms`,
       `视口 ${res.resizeCount}次 画布重建${res.canvasAllocs}次 时钟偏移${res.clockDelta === null ? '-' : Math.round(res.clockDelta)}ms 时间戳异常${res.tsAnomalies}`,
+      `桌面模式 ${desktopModeOn() ? '开（会接管多指触摸）' : '关'}  触点上限 ${navigator.maxTouchPoints}`,
       `环境 ${navigator.userAgent}`,
     ].join('\n');
   }
@@ -605,6 +643,7 @@
 
   /* ---------- 绑定 ---------- */
   function initControls() {
+    warnDesktopMode();
     document.querySelectorAll('#groupTabs .tab').forEach(t => t.addEventListener('click', () => {
       state.group = t.dataset.group;
       const inGroup = state.group === 'chaos'
