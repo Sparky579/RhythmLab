@@ -112,6 +112,7 @@
       this.rect = r;
       this.rectAt = performance.now();
       this.resizeCount = (this.resizeCount || 0) + 1;
+      this.lastResizeAt = performance.now();   // 取消若紧跟视口变化，那是我自己引起的
       this._gradCache = null;   // 尺寸变了，缓存的渐变作废
       const cap = Math.max(1, +this.settings.maxDpr || 2);
       const dpr = Math.min(window.devicePixelRatio || 1, cap, this.autoDprCap || 99);
@@ -153,6 +154,7 @@
       this.rawLastType = '-';
       this.fingersAtLast = 0;
       this.cancelSpots = [];   // 每次 touchcancel 时，被取消的手指离左右边缘最近多少 px
+      this.cancelCtx = [];     // 取消当时的上下文：距上次视口变化、是否有焦点、剩几指
       // 浏览器自己在做双指缩放时也会发 touchcancel，并在手势期间停止派发触摸。
       // 真缩放会动到 visualViewport，系统手势不会 —— 用它把两者分开。
       this.vvEvents = 0;
@@ -192,6 +194,15 @@
             this.cancelSpots.push(Math.round(near));
             if (this.cancelSpots.length > 40) this.cancelSpots.shift();
           }
+          // 取消紧跟在视口变化 / 失焦之后，说明是全屏切换、地址栏收放这类
+          // 我这边引起的；都不是，才是外部把触摸抢走。
+          this.cancelCtx.push({
+            r: this.lastResizeAt ? Math.round(now - this.lastResizeAt) : -1,
+            f: document.hasFocus() ? 1 : 0,
+            v: document.visibilityState === 'visible' ? 1 : 0,
+            n: e.touches ? e.touches.length : -1,
+          });
+          if (this.cancelCtx.length > 40) this.cancelCtx.shift();
         }
         this.raw[k]++;
         this.lastRawAt = now;
@@ -852,6 +863,7 @@
         raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
         maxFingers: this.maxFingers, cancelSpots: this.cancelSpots.slice(-20),
         vvEvents: this.vvEvents, vvScaleMax: this.vvScaleMax,
+        cancelCtx: this.cancelCtx.slice(-20),
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12

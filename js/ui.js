@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '34';
+  const BUILD = '35';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -549,6 +549,8 @@
       ).join(' ') || '无'}`,
       `取消位置 ${(res.cancelSpots || []).map((x) => x + 'px').join(' ') || '无'}（离最近的左右边缘）`,
       `视觉视口 事件${res.vvEvents} 最大缩放${(res.vvScaleMax || 1).toFixed(2)}`,
+      `取消时 ${(res.cancelCtx || []).map((c) =>
+        `距视口变化${c.r < 0 ? '-' : c.r + 'ms'}/焦点${c.f}/可见${c.v}/剩${c.n}指`).join(' ') || '无'}`,
       `输入空档 ${(res.inputGaps || []).map((x) => x.ms + 'ms').join(' ') || '无'}`,
       `帧 卡顿${(res.stalls || []).length}次 最长${res.maxGap || 0}ms 我的代码${res.maxFrameDur}ms 代码之外${res.maxOutside}ms`,
       `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
