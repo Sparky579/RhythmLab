@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '19';
+  const BUILD = '20';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   const STORE_KEY = 'rhythmlab_v2';
   const GROUPS = { trill: '交互', stream: '切', jack: '叠' };
@@ -63,6 +63,13 @@
 
   const isMixed = () => state.preset === 'mixed';
   let scrollSave = 0;
+  function exitFullscreen() {
+    if (!document.fullscreenElement && !document.webkitFullscreenElement) return;
+    const fn = document.exitFullscreen || document.webkitExitFullscreen;
+    if (!fn) return;
+    try { const r = fn.call(document); if (r && r.catch) r.catch(() => {}); } catch (e) { /* ignore */ }
+  }
+
   function lockScroll(on) {
     if (on) { scrollSave = window.scrollY || 0; document.body.classList.add('playing'); }
     else { document.body.classList.remove('playing'); window.scrollTo(0, scrollSave); }
@@ -354,12 +361,14 @@
   }
   function backToSetup() {
     game.stop();
+    exitFullscreen();
     lockScroll(false);
     $('play').classList.add('hidden');
     $('setup').classList.remove('hidden');
     refresh();
   }
   function showResult(res) {
+    exitFullscreen();          // 一局打完就退出全屏，方便看结果和改设置
     $('resultOverlay').classList.remove('hidden');
     $('resTitle').textContent = res.chart.challenge
       ? `${res.chart.presetName} · ${res.chart.keys}K · ${res.chart.bpmStart} → ${res.chart.bpmEnd} BPM`
@@ -402,6 +411,17 @@
       const total = Math.round(b.reduce((a, x) => a + x.ms, 0) / 100) / 10;
       warn.push(`检测到 ${b.length} 段连续打空（共 ${total} 秒、${b.reduce((a, x) => a + x.taps, 0)} 次触摸没打中任何音符），`
         + `最长一段 ${(Math.max.apply(null, b.map((x) => x.ms)) / 1000).toFixed(1)} 秒`);
+    }
+    if (res.inputGaps && res.inputGaps.length) {
+      const worst = Math.max.apply(null, res.inputGaps.map((x) => x.ms));
+      warn.push(`有 ${res.inputGaps.length} 段完全收不到输入（最长 ${worst}ms）`
+        + (res.stalls && res.stalls.length ? '，同期有画面卡顿，多半是性能问题'
+          : '，同期画面没有卡顿，说明触摸是在页面之外被丢掉的'));
+    }
+    if (res.presentStalls && res.presentStalls.length) {
+      const worst = Math.max.apply(null, res.presentStalls.map((x) => x[1]));
+      warn.push(`画面送显滞后 ${res.presentStalls.length} 次，最长 ${worst}ms`
+        + `（JS 在正常跑但帧没能按时上屏，属于显示层问题，可试着关掉「低延迟画布」或降低渲染分辨率）`);
     }
     if (res.stalls && res.stalls.length) {
       const worst = Math.max.apply(null, res.stalls.map((x) => x[1]));
@@ -592,6 +612,15 @@
     setSeg('axisHand', state.axisHand);
     setSeg('axisStyle', state.axisStyle);
 
+    const ll = $('lowLatency');
+    if (ll) {
+      try { ll.checked = localStorage.getItem('rhythmlab_lowlatency') === '1'; } catch (e) { /* ignore */ }
+      ll.addEventListener('change', (e) => {
+        try { localStorage.setItem('rhythmlab_lowlatency', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
+        location.reload();
+      });
+    }
+
     for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoCalibrate', 'autoFullscreen', 'inputDebug']) {
       if (!$(id)) continue;
       $(id).checked = !!state.game[id];
@@ -651,7 +680,10 @@
     $('btnBack').addEventListener('click', backToSetup);
 
     game.onFinish = showResult;
-    game.onPauseChange = (paused) => $('pauseOverlay').classList.toggle('hidden', !paused);
+    game.onPauseChange = (paused) => {
+      $('pauseOverlay').classList.toggle('hidden', !paused);
+      if (paused) exitFullscreen();     // 暂停也算「不在打」
+    };
     window.addEventListener('resize', () => {
       if (!$('setup').classList.contains('hidden') && chart) drawPreview(chart);
     });

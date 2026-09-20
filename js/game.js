@@ -51,7 +51,13 @@
   class Game {
     constructor(canvas, audio) {
       this.canvas = canvas;
-      this.ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: true });
+      // desynchronized（低延迟画布）在部分安卓设备上会导致画面周期性停更，
+      // 而它只换来几毫秒延迟，所以默认关掉，需要时再开。
+      this.lowLatency = false;
+      try {
+        this.lowLatency = localStorage.getItem('rhythmlab_lowlatency') === '1';
+      } catch (e) { /* ignore */ }
+      this.ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: this.lowLatency });
       this.audio = audio;
       this.settings = Object.assign({}, DEFAULT_SETTINGS);
       this.state = 'idle'; // idle | countin | playing | paused | resuming | finished
@@ -289,6 +295,7 @@
       // 表现就是「一段完全点不上、面板数字也不动」。这里把每一次长帧记下来。
       this.stalls = []; this.lastFrameAt = 0; this.maxGap = 0;
       this.autoDprCap = 0;        // 连续卡顿时自动压低渲染分辨率
+      this.presentStalls = []; this.maxRafLag = 0;
       this.bpmIdx = 0;
       this.currentBpm = chart.measureBpm ? chart.measureBpm[0] : chart.bpm;
       this.bpmFlashAt = -1;
@@ -399,7 +406,20 @@
       this.schedBeat = -this.countInBeats;
       this.state = 'countin';
       cancelAnimationFrame(this.raf);
-      const loop = () => { this.raf = requestAnimationFrame(loop); this._frame(); };
+      const loop = (rafTs) => {
+        this.raf = requestAnimationFrame(loop);
+        // rafTs 是这一帧的 vsync 时刻。正常情况下回调紧随其后（几毫秒内）；
+        // 若显示/合成层卡住而 JS 照常跑，这个滞后会明显变大。
+        if (rafTs) {
+          const lag = performance.now() - rafTs;
+          if (lag > this.maxRafLag) this.maxRafLag = lag;
+          if (lag > 120) {
+            this.presentStalls.push([Math.round(this.chartTime(performance.now()) * 1000), Math.round(lag)]);
+            if (this.presentStalls.length > 60) this.presentStalls.shift();
+          }
+        }
+        this._frame();
+      };
       this.raf = requestAnimationFrame(loop);
     }
     stop() {
@@ -658,6 +678,8 @@
         inputLog: this.inputLog.slice(-400), clockDelta: this.clockDelta,
         blackouts: this.blackouts(1200, 5),
         stalls: this.stalls.slice(-40), maxGap: Math.round(this.maxGap),
+        inputGaps: this.inputGaps(700).slice(-20), lowLatency: this.lowLatency,
+        presentStalls: this.presentStalls.slice(-20), maxRafLag: Math.round(this.maxRafLag),
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
           ? Math.round(this.settings.offsetMs + this.offSum / this.offCount) : null,
@@ -679,6 +701,17 @@
         if (e[2] !== null) hits++;
       }
       return { taps, hits };
+    }
+
+    /* 找「本来在连续敲，中间却一条输入都没收到」的空档。
+       这一项和卡顿统计一起看：卡顿为 0 却有输入空档，说明触摸是在页面之外被丢掉的。 */
+    inputGaps(minMs) {
+      const out = [];
+      for (let i = 1; i < this.inputLog.length; i++) {
+        const gap = this.inputLog[i][0] - this.inputLog[i - 1][0];
+        if (gap >= minMs) out.push({ at: this.inputLog[i - 1][0], ms: Math.round(gap) });
+      }
+      return out;
     }
 
     /* 从输入日志里找「有触摸但连续一段完全没中」的区间，用来抓断触 */
@@ -913,7 +946,9 @@
             + (this.clockDelta === null ? '' : `   时钟偏移 ${this.clockDelta.toFixed(0)}ms`),
           `近 3 秒 触摸 ${recent.taps} 命中 ${recent.hits}`
             + (recent.taps >= 4 && recent.hits === 0 ? '   ← 连续打空！' : ''),
+          `距上次输入 ${this.inputLog.length ? Math.round(this.chartTime(perfNow) * 1000 - this.inputLog[this.inputLog.length - 1][0]) : '-'}ms`,
           `卡顿 ${this.stalls.length} 次   最长帧 ${Math.round(this.maxGap)}ms`
+            + `   显示滞后 ${Math.round(this.maxRafLag)}ms`
             + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),
           `上次偏差 ${this.lastDt === null ? '打空' : (this.lastDt > 0 ? '+' : '') + this.lastDt.toFixed(0) + 'ms'}`
             + (this.offCount ? `   平均 ${(this.offSum / this.offCount > 0 ? '+' : '')}${(this.offSum / this.offCount).toFixed(0)}ms` : '')

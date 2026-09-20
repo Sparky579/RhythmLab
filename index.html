@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="css/style.css?v=19" />
+  <link rel="stylesheet" href="css/style.css?v=20" />
 </head>
 <body>
   <!-- 设置页 -->
@@ -211,6 +211,7 @@
             <label class="check"><input type="checkbox" id="autoCalibrate" /> 每局自动套用判定偏移</label>
             <label class="check"><input type="checkbox" id="autoFullscreen" checked /> 开始时自动全屏</label>
             <label class="check"><input type="checkbox" id="inputDebug" /> 输入诊断（排查断触）</label>
+            <label class="check"><input type="checkbox" id="lowLatency" /> 低延迟画布（部分设备会卡顿）</label>
             <label class="check"><input type="checkbox" id="missOnEmpty" /> 空打判 Miss（断连）</label>
             <label class="check"><input type="checkbox" id="autoplay" /> 自动演奏（观摩）</label>
           </div>
@@ -259,12 +260,12 @@
     </div>
   </div>
 
-  <script src="js/rng.js?v=19"></script>
-  <script src="js/generator.js?v=19"></script>
-  <script src="js/bgm.js?v=19"></script>
-  <script src="js/audio.js?v=19"></script>
-  <script src="js/game.js?v=19"></script>
-  <script src="js/ui.js?v=19"></script>
+  <script src="js/rng.js?v=20"></script>
+  <script src="js/generator.js?v=20"></script>
+  <script src="js/bgm.js?v=20"></script>
+  <script src="js/audio.js?v=20"></script>
+  <script src="js/game.js?v=20"></script>
+  <script src="js/ui.js?v=20"></script>
   <script>
   /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
   if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
@@ -277,7 +278,7 @@
   /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
      不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
   (function () {
-    var WANT = '19';
+    var WANT = '20';
     var MG = window.MG || {};
     var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
     if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }
