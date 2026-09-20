@@ -331,6 +331,12 @@
       this.presentStalls = []; this.maxRafLag = 0;
       this.lastPhase = { sched: 0, logic: 0, draw: 0 };
       this.lastFrameDur = 0; this.maxFrameDur = 0; this.maxOutside = 0;
+      // 帧间隔分桶：<20 / 20-40 / 40-80 / 80-160 / >160 ms
+      this.frameHist = new Int32Array(5);
+      // 连续掉帧追踪：连着多少帧、多少毫秒低于 25fps。
+      // 「卡三秒」到底是一帧卡三秒，还是几十帧接连卡，看这个。
+      this.slowRun = 0; this.slowRunMs = 0;
+      this.worstRunMs = 0; this.worstRunFrames = 0;
       this.bpmIdx = 0;
       this.currentBpm = chart.measureBpm ? chart.measureBpm[0] : chart.bpm;
       this.bpmFlashAt = -1;
@@ -619,6 +625,13 @@
       if (this.lastFrameAt) {
         const gap = perfNow - this.lastFrameAt;
         if (gap > this.maxGap) this.maxGap = gap;
+        this.frameHist[gap < 20 ? 0 : gap < 40 ? 1 : gap < 80 ? 2 : gap < 160 ? 3 : 4]++;
+        if (gap > 40) {                       // 低于 25fps 就算这一帧「慢」
+          this.slowRun++; this.slowRunMs += gap;
+          if (this.slowRunMs > this.worstRunMs) {
+            this.worstRunMs = this.slowRunMs; this.worstRunFrames = this.slowRun;
+          }
+        } else { this.slowRun = 0; this.slowRunMs = 0; }
         if (gap > 120) {
           const outside = Math.max(0, gap - (this.lastFrameDur || 0));
           this.stalls.push([Math.round(this.chartTime(perfNow) * 1000), Math.round(gap),
@@ -628,8 +641,11 @@
           if (outside > this.maxOutside) this.maxOutside = outside;
           // 连着卡三次就自动降一档渲染分辨率：掉帧比画质糙更要命，
           // 卡顿期间安卓会把排队的触摸直接丢掉。
-          if (this.stalls.length >= 3 && !this.autoDprCap && this.dpr > 1.25) {
-            this.autoDprCap = Math.max(1, this.dpr - 0.75);
+          // 允许逐级往下降，直到 1.0；每降一档至少间隔 2 秒，避免一串卡顿里连降到底
+          if (this.stalls.length >= 3 && this.dpr > 1.0
+              && perfNow - (this.lastDprDropAt || 0) > 2000) {
+            this.autoDprCap = Math.max(1, (this.autoDprCap || this.dpr) - 0.5);
+            this.lastDprDropAt = perfNow;
             this.resize();
           }
         }
@@ -749,6 +765,8 @@
         presentStalls: this.presentStalls.slice(-20), maxRafLag: Math.round(this.maxRafLag),
         resizeCount: this.resizeCount || 0, canvasAllocs: this.canvasAllocs || 0,
         maxFrameDur: Math.round(this.maxFrameDur), maxOutside: Math.round(this.maxOutside),
+        frameHist: Array.from(this.frameHist),
+        worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
           ? Math.round(this.settings.offsetMs + this.offSum / this.offCount) : null,
@@ -1029,7 +1047,9 @@
             + `   显示滞后 ${Math.round(this.maxRafLag)}ms`,
           `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`,
           `本帧 绘制${this.lastPhase.draw.toFixed(1)} 音频${this.lastPhase.sched.toFixed(1)} 逻辑${this.lastPhase.logic.toFixed(1)}ms`,
-          `最长: 我的代码 ${Math.round(this.maxFrameDur)}ms   代码之外 ${Math.round(this.maxOutside)}ms`
+          `最长: 我的代码 ${Math.round(this.maxFrameDur)}ms   代码之外 ${Math.round(this.maxOutside)}ms`,
+          `连续掉帧最长 ${(this.worstRunMs / 1000).toFixed(1)}s / ${this.worstRunFrames} 帧`
+            + `   帧分布 ${this.frameHist[0]}/${this.frameHist[1]}/${this.frameHist[2]}/${this.frameHist[3]}/${this.frameHist[4]}`
             + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),
           `上次偏差 ${this.lastDt === null ? '打空' : (this.lastDt > 0 ? '+' : '') + this.lastDt.toFixed(0) + 'ms'}`
             + (this.offCount ? `   平均 ${(this.offSum / this.offCount > 0 ? '+' : '')}${(this.offSum / this.offCount).toFixed(0)}ms` : '')
