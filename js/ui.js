@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '39';
+  const BUILD = '40';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -64,6 +64,15 @@
   MG.game = game;   // 供自动化测试驱动真实路径
   // 原生壳（安卓 App）通过它把 MotionEvent 直接喂进来
   MG.nativeTouch = (type, id, x, age) => game.nativeTouch(type, id, x, age);
+  /* 原生壳攒批下发：一条字符串里是若干 "类型,id,x,age"，分号分隔 */
+  MG.nativeBatch = (s) => {
+    if (!s) return;
+    const recs = s.split(';');
+    for (let i = 0; i < recs.length; i++) {
+      const f = recs[i].split(',');
+      if (f.length === 4) game.nativeTouch(f[0], +f[1], +f[2], +f[3]);
+    }
+  };
   let chart = null;
   let previewTimer = 0;
 
@@ -507,7 +516,9 @@
       if (!(window.RLShell && RLShell.stats)) return '未启用';
       const n = JSON.parse(RLShell.stats());
       return `按下${n.down} 移动${n.move} 抬起${n.up} 取消${n.cancel}`
-        + ` 最多${n.maxPointers}指 最长空档${n.maxGap}ms`;
+        + ` 最多${n.maxPointers}指 最长空档${n.maxGap}ms`
+        + ` 派发耗时 平均${n.avgDispatchUs}us/最长${n.maxDispatchUs}us`
+        + ` JS调用${n.evalCalls}次`;
     } catch (e) { return '读取失败'; }
   }
 

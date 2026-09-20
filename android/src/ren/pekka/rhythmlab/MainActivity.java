@@ -207,10 +207,18 @@ public class MainActivity extends Activity {
         public String stats() {
             return "{\"down\":" + nDown + ",\"move\":" + nMove + ",\"up\":" + nUp
                     + ",\"cancel\":" + nCancel + ",\"maxPointers\":" + nMaxPointers
-                    + ",\"maxGap\":" + maxNativeGap + "}";
+                    + ",\"maxGap\":" + maxNativeGap
+                    + ",\"evalCalls\":" + evalCalls
+                    + ",\"maxDispatchUs\":" + maxDispatchUs
+                    + ",\"avgDispatchUs\":" + (dispatchCount > 0 ? dispatchTotalUs / dispatchCount : 0)
+                    + "}";
         }
         @android.webkit.JavascriptInterface
-        public void reset() { nDown = nMove = nUp = nCancel = nMaxPointers = 0; maxNativeGap = 0; lastNativeAt = 0; }
+        public void reset() {
+            nDown = nMove = nUp = nCancel = nMaxPointers = 0;
+            maxNativeGap = 0; lastNativeAt = 0;
+            evalCalls = 0; maxDispatchUs = 0; dispatchTotalUs = 0; dispatchCount = 0;
+        }
     }
 
     /** 系统自己声明的手势区有多宽（API 29+）。排除区没盖住它就会被接管。 */
@@ -243,9 +251,19 @@ public class MainActivity extends Activity {
     /** 原生触摸直采：不消费，只是抢先把每一个按下/抬起/移动转发给 JS。 */
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
+        final long t0 = System.nanoTime();
         try { forward(ev); } catch (Throwable ignored) { }
-        return super.dispatchTouchEvent(ev);
+        boolean r = super.dispatchTouchEvent(ev);
+        // 派发这一步花了多久：慢的就是它拖住了 finishInputEvent
+        long us = (System.nanoTime() - t0) / 1000;
+        dispatchTotalUs += us;
+        if (us > maxDispatchUs) maxDispatchUs = us;
+        dispatchCount++;
+        return r;
     }
+
+    private long maxDispatchUs, dispatchTotalUs;
+    private int dispatchCount;
 
     private void forward(MotionEvent ev) {
         if (web == null) return;
@@ -286,10 +304,36 @@ public class MainActivity extends Activity {
         }
     }
 
+    /* 攒批下发。
+       原先每个触摸动作都同步调一次 evaluateJavascript，高频时每秒几百次跨进程调用，
+       会把 dispatchTouchEvent 的返回拖慢；返回慢就是 finishInputEvent 慢，
+       InputDispatcher 判定窗口跟不上，于是发 ACTION_CANCEL 并停止派发 ——
+       这正是「只有高频才断」的样子。改成在 UI 线程的下一个消息里一次性发完。 */
+    private final StringBuilder batch = new StringBuilder(512);
+    private int batchCount;
+    private boolean flushScheduled;
+    private int evalCalls;
+
+    private final Runnable flush = new Runnable() {
+        public void run() {
+            flushScheduled = false;
+            if (batchCount == 0 || web == null) return;
+            final String js = "window.MG&&MG.nativeBatch&&MG.nativeBatch(\"" + batch + "\")";
+            batch.setLength(0);
+            batchCount = 0;
+            evalCalls++;
+            try { web.evaluateJavascript(js, null); } catch (Throwable ignored) { }
+        }
+    };
+
     private void send(String type, int id, float xPx, float age) {
-        final String js = "window.MG&&MG.nativeTouch&&MG.nativeTouch('" + type + "'," + id
-                + "," + (xPx / density) + "," + age + ")";
-        web.evaluateJavascript(js, null);
+        if (batchCount > 0) batch.append(';');
+        batch.append(type).append(',').append(id).append(',')
+             .append(Math.round(xPx / density * 10) / 10f).append(',').append(Math.round(age));
+        batchCount++;
+        // 攒太多就立刻发，别让一帧内的爆发拖到下一帧
+        if (batchCount >= 32) { web.removeCallbacks(flush); flush.run(); return; }
+        if (!flushScheduled) { flushScheduled = true; web.post(flush); }
     }
 
     @Override protected void onResume() { super.onResume(); applyImmersive(); }
