@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '38';
+  const BUILD = '39';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -344,6 +344,8 @@
   /* ---------- 开始 / 结果 ---------- */
   async function startGame() {
     if (!chart) chart = G.generate(genOpts());
+    // 原生层计数按局清零，诊断里的数字才和本局对得上
+    try { if (window.RLShell && RLShell.reset) RLShell.reset(); } catch (e) { /* ignore */ }
     // 个别浏览器的 AudioContext.resume() 可能永不 resolve，超时后照常开始
     await Promise.race([
       audio.unlock().catch(() => {}),
@@ -498,6 +500,17 @@
   /* 把本局所有诊断数字拼成一段纯文本，方便直接发出来，不用人工抄 */
   const RAW_NAME = { ts: '按下', tm: '移动', te: '抬起', tc: '取消', pd: '指针' };
 
+  /* 原生层（Activity 的 MotionEvent）自己数到的动作。
+     页面看到 touchcancel、这里的 cancel 却是 0，就说明取消是 WebView 造的。 */
+  function nativeStats() {
+    try {
+      if (!(window.RLShell && RLShell.stats)) return '未启用';
+      const n = JSON.parse(RLShell.stats());
+      return `按下${n.down} 移动${n.move} 抬起${n.up} 取消${n.cancel}`
+        + ` 最多${n.maxPointers}指 最长空档${n.maxGap}ms`;
+    } catch (e) { return '读取失败'; }
+  }
+
   function diagText(res) {
     const c = res.chart, r = res.raw || {};
     const h = res.frameHist || [];
@@ -524,6 +537,7 @@
       `视口 ${res.resizeCount}次 画布重建${res.canvasAllocs}次 时钟偏移${res.clockDelta === null ? '-' : Math.round(res.clockDelta)}ms 时间戳异常${res.tsAnomalies}`,
       `轨道 宽${Math.round(MG.game.laneW)}px 起点${Math.round(MG.game.laneX0)}px`
         + ` 手势区${MG.game.edgeGestureCss >= 0 ? MG.game.edgeGestureCss + 'px' : '未知'}`,
+      `原生层动作 ${nativeStats()}`,
       `原生壳 ${window.__shell
         ? `手势排除${__shell.ok ? '已生效 ' + __shell.band : '失败(' + __shell.band + ')'}`
           + ` 系统手势区 左${__shell.gl}/右${__shell.gr}/下${__shell.gb}px(设备像素)`

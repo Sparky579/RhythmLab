@@ -59,7 +59,8 @@ public class MainActivity extends Activity {
         st.setDomStorageEnabled(true);
         st.setMediaPlaybackRequiresUserGesture(false);
         // UA 打个标记：页面据此知道自己跑在原生壳里，桥没注入上时也能把问题显出来
-        st.setUserAgentString(st.getUserAgentString() + " RhythmLabShell/2");
+        web.addJavascriptInterface(new Shell(), "RLShell");
+        st.setUserAgentString(st.getUserAgentString() + " RhythmLabShell/3");
         st.setSupportZoom(false);
         st.setBuiltInZoomControls(false);
         st.setCacheMode(WebSettings.LOAD_NO_CACHE);
@@ -179,6 +180,39 @@ public class MainActivity extends Activity {
         reportShellState();
     }
 
+    /** 原生层收到的动作计数。页面看到的 touchcancel 如果在这里没有对应的
+     *  ACTION_CANCEL，说明取消是 WebView 自己造出来的，不是安卓发的。 */
+    private int nDown, nMove, nUp, nCancel, nMaxPointers;
+    private long lastNativeAt, maxNativeGap;
+
+    private void countNative(int action, MotionEvent ev) {
+        long now = SystemClock.uptimeMillis();
+        if (lastNativeAt != 0 && now - lastNativeAt > maxNativeGap) maxNativeGap = now - lastNativeAt;
+        lastNativeAt = now;
+        if (ev.getPointerCount() > nMaxPointers) nMaxPointers = ev.getPointerCount();
+        switch (action) {
+            case MotionEvent.ACTION_DOWN:
+            case MotionEvent.ACTION_POINTER_DOWN: nDown++; break;
+            case MotionEvent.ACTION_MOVE: nMove++; break;
+            case MotionEvent.ACTION_UP:
+            case MotionEvent.ACTION_POINTER_UP: nUp++; break;
+            case MotionEvent.ACTION_CANCEL: nCancel++; break;
+            default: break;
+        }
+    }
+
+    /** 只读的测量接口：页面在生成诊断时取一次，没有逐事件开销。 */
+    public final class Shell {
+        @android.webkit.JavascriptInterface
+        public String stats() {
+            return "{\"down\":" + nDown + ",\"move\":" + nMove + ",\"up\":" + nUp
+                    + ",\"cancel\":" + nCancel + ",\"maxPointers\":" + nMaxPointers
+                    + ",\"maxGap\":" + maxNativeGap + "}";
+        }
+        @android.webkit.JavascriptInterface
+        public void reset() { nDown = nMove = nUp = nCancel = nMaxPointers = 0; maxNativeGap = 0; lastNativeAt = 0; }
+    }
+
     /** 系统自己声明的手势区有多宽（API 29+）。排除区没盖住它就会被接管。 */
     private int[] gestureInsets() {
         try {
@@ -216,6 +250,7 @@ public class MainActivity extends Activity {
     private void forward(MotionEvent ev) {
         if (web == null) return;
         final int action = ev.getActionMasked();
+        countNative(action, ev);
         // 事件已经排队了多久：JS 端用 performance.now() - age 还原真实时刻
         final float age = SystemClock.uptimeMillis() - ev.getEventTime();
 
