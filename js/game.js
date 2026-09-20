@@ -179,9 +179,15 @@
       };
       const each = (list, fn) => { for (let i = 0; i < list.length; i++) fn(list[i]); };
 
+      /* 必须是被动监听。非被动的 touchstart 会把整条触摸序列变成 blocking：
+         浏览器要把每个 touchstart 送到渲染主线程、等 JS 回执，才能告诉安卓
+         这个事件处理完了；安卓的 InputDispatcher 在等回执期间不再派发新事件。
+         四指连点是四倍的 ACTION_POINTER_DOWN，每个回执都排在当前这帧后面，
+         积压快过消化就会整段收不到触摸，排空后又一起恢复 —— 就是那个几秒的断流。
+         preventDefault 原本挡的滚动、缩放、长按菜单，已分别由 touch-action:none、
+         user-scalable=no、user-select/touch-callout:none 挡掉，这里不需要再挡。 */
       root.addEventListener('touchstart', (e) => {
         if (skip(e)) { this.raw.skipped++; return; }
-        if (e.cancelable) e.preventDefault();
         this.lastTouchAt = performance.now();
         // 原生壳在转发触摸：DOM 这一路让位。但如果原生事件迟迟不来，
         // 说明那条通道坏了，立刻退回 DOM，别让整个游戏点不动。
@@ -195,7 +201,7 @@
           this.touches.set(t.identifier, { lane: pos.lane, x: t.clientX });
           this.inputLane(pos.lane, ts, pos.frac);
         });
-      }, { passive: false });
+      }, { passive: true });
 
       // 手指没完全抬起就滑到别的轨（手机上最常见的「断触」）：滑过边界也算一次击打。
       // 用被动监听：touchmove 是高频事件，四指按住时每秒可达近千次；非被动监听会让

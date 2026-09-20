@@ -88,7 +88,6 @@ function paint(e) {
     if (els[k]) els[k].classList.add('on');
   }
 }
-document.addEventListener('touchmove', function (e) { e.preventDefault(); }, { passive: false });
 
 var frames = 0, fpsAt = performance.now(), fps = 0;
 (function tick() {

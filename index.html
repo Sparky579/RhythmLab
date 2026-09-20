@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="css/style.css?v=30" />
+  <link rel="stylesheet" href="css/style.css?v=31" />
 </head>
 <body>
   <!-- 设置页 -->
@@ -25,7 +25,7 @@
         </div>
       </div>
       <div class="hero-actions">
-        <a id="btnApk" class="ghost" href="RhythmLab-v30.apk" download>⬇ 安卓 App</a>
+        <a id="btnApk" class="ghost" href="RhythmLab-v31.apk" download>⬇ 安卓 App</a>
         <button id="btnFullscreen" class="ghost" title="全屏">⛶ 全屏</button>
       </div>
     </header>
@@ -267,12 +267,12 @@
     </div>
   </div>
 
-  <script src="js/rng.js?v=30"></script>
-  <script src="js/generator.js?v=30"></script>
-  <script src="js/bgm.js?v=30"></script>
-  <script src="js/audio.js?v=30"></script>
-  <script src="js/game.js?v=30"></script>
-  <script src="js/ui.js?v=30"></script>
+  <script src="js/rng.js?v=31"></script>
+  <script src="js/generator.js?v=31"></script>
+  <script src="js/bgm.js?v=31"></script>
+  <script src="js/audio.js?v=31"></script>
+  <script src="js/game.js?v=31"></script>
+  <script src="js/ui.js?v=31"></script>
   <script>
   /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
   if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
@@ -285,7 +285,7 @@
   /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
      不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
   (function () {
-    var WANT = '30';
+    var WANT = '31';
     var MG = window.MG || {};
     var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
     if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }
