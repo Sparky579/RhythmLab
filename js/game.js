@@ -153,6 +153,20 @@
       this.rawLastType = '-';
       this.fingersAtLast = 0;
       this.cancelSpots = [];   // 每次 touchcancel 时，被取消的手指离左右边缘最近多少 px
+      // 浏览器自己在做双指缩放时也会发 touchcancel，并在手势期间停止派发触摸。
+      // 真缩放会动到 visualViewport，系统手势不会 —— 用它把两者分开。
+      this.vvEvents = 0;
+      this.vvScaleMax = 1;
+      const vv = window.visualViewport;
+      if (vv) {
+        const note = () => {
+          if (this.state !== 'playing') return;
+          this.vvEvents++;
+          if (vv.scale > this.vvScaleMax) this.vvScaleMax = vv.scale;
+        };
+        vv.addEventListener('resize', note);
+        vv.addEventListener('scroll', note);
+      }
       this.rawTimes = new Float64Array(256);   // 最近若干次原始事件的时刻，用来算实时速率
       this.rawN = 0;
       this.maxFingers = 0;
@@ -837,6 +851,7 @@
         frameHist: Array.from(this.frameHist),
         raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
         maxFingers: this.maxFingers, cancelSpots: this.cancelSpots.slice(-20),
+        vvEvents: this.vvEvents, vvScaleMax: this.vvScaleMax,
         worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
         dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
