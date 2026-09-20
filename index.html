@@ -1,0 +1,302 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="mobile-web-app-capable" content="yes" />
+  <meta name="theme-color" content="#0b0d17" />
+  <title>RhythmLab · 音游模拟器</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns=%27http://www.w3.org/2000/svg%27 viewBox=%270 0 64 64%27%3E%3Cdefs%3E%3ClinearGradient id=%27g%27 x1=%270%27 y1=%270%27 x2=%271%27 y2=%271%27%3E%3Cstop offset=%270%27 stop-color=%27%234fc8ff%27/%3E%3Cstop offset=%271%27 stop-color=%27%23ff6fae%27/%3E%3C/linearGradient%3E%3C/defs%3E%3Crect width=%2764%27 height=%2764%27 rx=%2716%27 fill=%27url(%23g)%27/%3E%3Ccircle cx=%2732%27 cy=%2732%27 r=%2712%27 fill=%27%230b0d17%27/%3E%3C/svg%3E" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <link rel="stylesheet" href="css/style.css?v=17" />
+</head>
+<body>
+  <!-- 设置页 -->
+  <main id="setup" class="screen">
+    <header class="hero">
+      <div class="brand">
+        <span class="logo"></span>
+        <div>
+          <h1>RhythmLab</h1>
+          <p>4K / 7K 谱面生成训练器 · 电脑与手机触屏</p>
+        </div>
+      </div>
+      <div class="hero-actions">
+        <a id="btnApk" class="ghost" href="RhythmLab.apk" download>⬇ 安卓 App</a>
+        <button id="btnFullscreen" class="ghost" title="全屏">⛶ 全屏</button>
+      </div>
+    </header>
+
+    <div class="layout">
+      <section class="panel">
+        <h2>训练类型</h2>
+        <div class="tabs" id="groupTabs">
+          <button data-group="trill" class="tab active">交互</button>
+          <button data-group="stream" class="tab">切</button>
+          <button data-group="jack" class="tab">叠</button>
+          <button data-group="chaos" class="tab">乱 / 散打</button>
+        </div>
+        <div id="presetGrid" class="preset-grid"></div>
+
+        <div id="optTrill" class="subopts">
+          <div class="field">
+            <label>位移幅度 <output id="shiftAmountOut">50%</output></label>
+            <input type="range" id="shiftAmount" min="0" max="1" step="0.05" value="0.5" />
+            <p class="hint">0% 约等于原地交互，100% 是能跨到整块键区的大位移。</p>
+          </div>
+          <div class="field" id="axisOpts">
+            <label>轴手（反手）</label>
+            <div class="seg" id="axisHand">
+              <button data-v="left" class="active">左手为轴</button>
+              <button data-v="right">右手为轴</button>
+              <button data-v="alt">每乐句交替</button>
+            </div>
+            <label>轴交互样式</label>
+            <div class="seg" id="axisStyle">
+              <button data-v="tri" class="active">三角往返</button>
+              <button data-v="x">X 形（跨手）</button>
+              <button data-v="8">8 形（跨手）</button>
+            </div>
+          </div>
+        </div>
+
+        <div id="optMixed" class="subopts">
+          <div class="field">
+            <label>花样比例 <output id="fancyRatioOut">35%</output></label>
+            <input type="range" id="fancyRatio" min="0" max="0.7" step="0.05" value="0.35" />
+            <p class="hint">散打以「乱」为底，其余乐句从下面的花样池里随机抽。</p>
+          </div>
+          <div class="mixed-head">
+            <label>花样池（每 2 小节可能换一次）</label>
+            <div>
+              <button class="link" id="mixAll">全选</button>
+              <button class="link" id="mixNone">清空</button>
+            </div>
+          </div>
+          <div id="mixedPool" class="mixed-pool"></div>
+        </div>
+
+        <div class="start-block">
+          <button id="btnStart" class="primary">开始训练</button>
+          <p class="hint center" id="keyHelp"></p>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2>参数</h2>
+        <div class="field">
+          <label>键位模式</label>
+          <div class="seg" id="keys">
+            <button data-v="4" class="active">4K</button>
+            <button data-v="7">7K</button>
+          </div>
+          <p class="hint" id="keysHint"></p>
+        </div>
+        <div class="field">
+          <label>BPM <output id="bpmOut">160</output></label>
+          <div class="row">
+            <input type="range" id="bpm" min="60" max="300" step="1" value="160" />
+            <input type="number" id="bpmNum" min="40" max="400" value="160" />
+          </div>
+          <p class="hint" id="bpmHint"></p>
+        </div>
+        <div class="field">
+          <label>背景音</label>
+          <select id="bgm"></select>
+          <p class="hint" id="bgmHint"></p>
+          <label style="margin-top:8px">BGM 音量 <output id="bgmVolumeOut">100%</output></label>
+          <input type="range" id="bgmVolume" min="0" max="1.5" step="0.05" value="1" />
+        </div>
+        <div class="field">
+          <label>下落速度 <output id="speedOut">1.0 倍</output></label>
+          <input type="range" id="speed" min="0.5" max="4" step="0.1" value="1" />
+          <p class="hint">1.0 倍是标准速度，数字越大音符掉得越快、提前量越少。</p>
+        </div>
+        <div class="field two">
+          <div>
+            <label>PERFECT <output id="perfectMsOut">40 ms</output></label>
+            <input type="range" id="perfectMs" min="10" max="100" step="5" value="40" />
+          </div>
+          <div>
+            <label>GREAT <output id="greatMsOut">80 ms</output></label>
+            <input type="range" id="greatMs" min="20" max="200" step="5" value="80" />
+          </div>
+        </div>
+        <p class="hint" id="judgeHint"></p>
+        <div class="field checks" style="grid-template-columns:1fr">
+          <label class="check"><input type="checkbox" id="challenge" /><span><b>挑战模式</b>：BPM 逐段递增</span></label>
+        </div>
+        <div id="optChallenge" class="subopts challenge-box">
+          <div class="field two">
+            <div>
+              <label>目标 BPM</label>
+              <input type="number" id="bpmEnd" min="40" max="400" value="200" />
+            </div>
+            <div>
+              <label>每次 +</label>
+              <input type="number" id="rampStep" min="1" max="50" value="5" />
+            </div>
+          </div>
+          <div class="field">
+            <label>每几小节提速一次 <output id="rampMeasuresOut">4 小节</output></label>
+            <input type="range" id="rampMeasures" min="1" max="16" step="1" value="4" />
+          </div>
+          <p class="hint" id="challengeHint"></p>
+        </div>
+        <div class="field">
+          <label>休息段比例 <output id="restOut">0%</output></label>
+          <input type="range" id="restRatio" min="0" max="0.5" step="0.05" value="0" />
+          <p class="hint" id="restHint"></p>
+        </div>
+        <div class="field two">
+          <div>
+            <label>小节数</label>
+            <select id="measures">
+              <option value="8">8 小节</option>
+              <option value="16" selected>16 小节</option>
+              <option value="32">32 小节</option>
+              <option value="64">64 小节</option>
+            </select>
+          </div>
+          <div>
+            <label>种子</label>
+            <div class="row">
+              <input type="text" id="seed" value="demo" maxlength="24" />
+              <button id="btnSeed" class="ghost" title="随机种子">🎲</button>
+            </div>
+          </div>
+        </div>
+
+        <details class="adv">
+          <summary>游戏设置</summary>
+          <div class="field">
+            <label>判定线高度 <output id="judgeYOut">80%</output></label>
+            <input type="range" id="judgeY" min="0.5" max="0.92" step="0.01" value="0.8" />
+          </div>
+          <div class="field">
+            <label>轨道左右留白 <output id="edgeMarginOut">28 px</output></label>
+            <input type="range" id="edgeMargin" min="0" max="60" step="2" value="28" />
+            <p class="hint">安卓手势导航会吃掉屏幕最边上约 20~30px 的触摸。留白把最外侧轨道让开这条带，
+              留白区内点击仍然算最外侧轨，只是不摆音符。</p>
+          </div>
+          <div class="field">
+            <label>相邻轨容错</label>
+            <select id="touchAssist">
+              <option value="0">关闭 · 只认按到的那一轨</option>
+              <option value="1">保守 · 仅落点压在轨道边线时</option>
+              <option value="2" selected>宽松 · 本轨没音符时看相邻轨</option>
+            </select>
+            <p class="hint">只有本轨在判定窗口内确实没有音符可打时才会去看相邻轨，不会抢走本该打中的音符。</p>
+          </div>
+          <div class="field">
+            <label>判定偏移 <output id="offsetOut">0 ms</output></label>
+            <input type="range" id="offsetMs" min="-120" max="120" step="1" value="0" />
+            <p class="hint">结果页显示平均偏差：若总是 LATE +30ms，可把偏移设为 +30。</p>
+          </div>
+          <div class="field">
+            <label>音量 <output id="volumeOut">80%</output></label>
+            <input type="range" id="volume" min="0" max="1" step="0.05" value="0.8" />
+          </div>
+          <div class="field checks">
+            <label class="check"><input type="checkbox" id="metroOverlay" /> 叠加节拍器</label>
+            <label class="check"><input type="checkbox" id="hitSound" checked /> 打击音</label>
+            <label class="check"><input type="checkbox" id="handColors" checked /> 左右手颜色区分</label>
+            <label class="check"><input type="checkbox" id="showErrorBar" checked /> 误差条</label>
+            <label class="check"><input type="checkbox" id="autoCalibrate" checked /> 每局自动套用判定偏移</label>
+            <label class="check"><input type="checkbox" id="autoFullscreen" checked /> 开始时自动全屏</label>
+            <label class="check"><input type="checkbox" id="inputDebug" /> 输入诊断（排查断触）</label>
+            <label class="check"><input type="checkbox" id="missOnEmpty" /> 空打判 Miss（断连）</label>
+            <label class="check"><input type="checkbox" id="autoplay" /> 自动演奏（观摩）</label>
+          </div>
+        </details>
+      </section>
+
+      <section class="panel preview-panel">
+        <h2>谱面预览 <span class="muted">前 4 小节</span></h2>
+        <canvas id="preview" width="300" height="360"></canvas>
+        <div class="stats" id="stats"></div>
+        <div class="warn" id="warnings"></div>
+      </section>
+    </div>
+  </main>
+
+  <!-- 游戏页 -->
+  <div id="play" class="screen hidden">
+    <canvas id="game"></canvas>
+    <button id="btnPause" class="pause-btn" title="暂停">❚❚</button>
+    <div id="pauseOverlay" class="overlay hidden">
+      <div class="card">
+        <h2>已暂停</h2>
+        <button id="btnResume" class="primary">继续</button>
+        <button id="btnRestart" class="ghost">重新开始</button>
+        <button id="btnQuit" class="ghost">返回设置</button>
+      </div>
+    </div>
+    <div id="resultOverlay" class="overlay hidden">
+      <div class="card result">
+        <h2 id="resTitle">结果</h2>
+        <div class="score" id="resScore">0000000</div>
+        <div class="acc" id="resAcc">0.00%</div>
+        <div class="counts">
+          <div class="c perfect"><span>PERFECT</span><b id="resP">0</b></div>
+          <div class="c great"><span>GREAT</span><b id="resG">0</b></div>
+          <div class="c miss"><span>MISS</span><b id="resM">0</b></div>
+        </div>
+        <div class="meta" id="resMeta"></div>
+        <canvas id="resChart" width="320" height="90"></canvas>
+        <div class="btns">
+          <button id="btnAgain" class="primary">再来一次</button>
+          <button id="btnNewSeed" class="ghost">换个种子</button>
+          <button id="btnBack" class="ghost">返回设置</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script src="js/rng.js?v=17"></script>
+  <script src="js/generator.js?v=17"></script>
+  <script src="js/bgm.js?v=17"></script>
+  <script src="js/audio.js?v=17"></script>
+  <script src="js/game.js?v=17"></script>
+  <script src="js/ui.js?v=17"></script>
+  <script>
+  /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
+  if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
+    window.addEventListener('load', () => {
+      navigator.serviceWorker.register('sw.js').catch(() => {});
+    });
+  }
+  </script>
+  <script>
+  /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
+     不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
+  (function () {
+    var WANT = '17';
+    var MG = window.MG || {};
+    var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
+    if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }
+    var healed = false;
+    try { healed = sessionStorage.getItem('mg_heal') === '1'; } catch (e) {}
+    if (!healed) {
+      try { sessionStorage.setItem('mg_heal', '1'); } catch (e) {}
+      location.replace(location.pathname + '?r=' + Date.now());
+      return;
+    }
+    var box = document.createElement('div');
+    box.style.cssText = 'position:fixed;left:0;right:0;top:0;z-index:999;background:#2a1020;color:#ffd9e2;'
+      + 'padding:14px 16px;font:14px/1.6 system-ui,sans-serif;text-align:center';
+    box.innerHTML = '页面没能正常启动（' + bad + '）。'
+      + '<button id="mgReset" style="margin-left:10px;padding:6px 12px;border-radius:8px;border:0;'
+      + 'background:#7aa2ff;color:#fff;cursor:pointer">清除本地设置并重载</button>';
+    document.body.appendChild(box);
+    document.getElementById('mgReset').onclick = function () {
+      try { localStorage.clear(); sessionStorage.clear(); } catch (e) {}
+      location.replace(location.pathname + '?r=' + Date.now());
+    };
+  })();
+  </script>
+</body>
+</html>

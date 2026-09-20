@@ -1,0 +1,7 @@
+# 构建产物
+android/build/
+android/keystore.jks
+*.apk
+# 编辑器 / 系统
+.DS_Store
+*.swp
