@@ -478,8 +478,12 @@
       if (this.bgm.kind === 'file') {
         this.bgmBuf = this.audio.decoded && this.audio.decoded[this.bgm.url] || null;
         if (!this.bgmBuf) { this.bgm = null; return; }
-        // 用解码后的真实时长反推每小节时长，避免编码器补零造成累积误差
-        this.bgmBarDur = this.bgmBuf.duration / this.bgm.loopBars;
+        // 自己上传的曲子长度是任意的，小节时长直接由确认过的 BPM 算；
+        // 内置循环段是按整数小节剪的，用真实时长反推更准（能吃掉编码器补零）
+        this.bgmStart = this.bgm.custom ? (+this.bgm.startSec || 0) : 0;
+        this.bgmBarDur = this.bgm.custom
+          ? 4 * 60 / this.bgm.baseBpm
+          : this.bgmBuf.duration / this.bgm.loopBars;
       } else {
         this.bgmSteps = Math.max(1, Math.round(16 / this.bgmRatio));
       }
@@ -544,7 +548,7 @@
         const measDur = ch.measureTime[m + 1] - t;
         // 一个缓冲小节横跨 ratio 个谱面小节
         const barPos = (m / ratio) % loopBars;
-        const offset = barPos * barDur;
+        const offset = (this.bgmStart || 0) + barPos * barDur;
         const rate = (barDur / ratio) / measDur;
         this.audio.playSlice(this.bgmBuf, this.audioStart + this.countIn + t, offset, measDur, rate, 1);
         this.bgmMeasure++;

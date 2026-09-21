@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="css/style.css?v=45" />
+  <link rel="stylesheet" href="css/style.css?v=46" />
 </head>
 <body>
   <!-- 设置页 -->
@@ -25,7 +25,7 @@
         </div>
       </div>
       <div class="hero-actions">
-        <a id="btnApk" class="ghost" href="RhythmLab-v45.apk" download>⬇ 安卓 App</a>
+        <a id="btnApk" class="ghost" href="RhythmLab-v46.apk" download>⬇ 安卓 App</a>
         <button id="btnFullscreen" class="ghost" title="全屏">⛶ 全屏</button>
       </div>
     </header>
@@ -107,6 +107,13 @@
           <label>背景音</label>
           <select id="bgm"></select>
           <p class="hint" id="bgmHint"></p>
+          <div class="row" style="margin-top:8px">
+            <button type="button" id="btnUploadBgm" class="ghost">＋ 上传音乐</button>
+            <button type="button" id="btnManageBgm" class="ghost hidden">管理我的音乐</button>
+          </div>
+          <input type="file" id="bgmFile" accept="audio/*" class="hidden" />
+          <p class="hint" id="bgmUploadHint"></p>
+          <div id="myBgmList" class="my-bgm hidden"></div>
           <label style="margin-top:8px">BGM 音量 <output id="bgmVolumeOut">100%</output></label>
           <input type="range" id="bgmVolume" min="0" max="1.5" step="0.05" value="1" />
         </div>
@@ -227,6 +234,33 @@
     </div>
   </main>
 
+  <!-- 上传后的节拍确认：节拍器叠在音乐上，对不上就手动调 -->
+  <div id="bgmConfirm" class="overlay hidden">
+    <div class="card">
+      <h2>确认节拍</h2>
+      <p class="muted" id="bgmcName"></p>
+      <p class="hint">节拍器会叠在音乐上。听着对不上就调下面两项，调到咔哒声正好落在鼓点上。</p>
+      <div class="field">
+        <label>BPM <output id="bgmcBpmOut">120</output></label>
+        <div class="row">
+          <button type="button" class="ghost" id="bgmcHalf">÷2</button>
+          <input type="range" id="bgmcBpm" min="40" max="240" step="0.1" value="120" />
+          <button type="button" class="ghost" id="bgmcDouble">×2</button>
+        </div>
+      </div>
+      <div class="field">
+        <label>起拍点 <output id="bgmcOffOut">0 ms</output></label>
+        <input type="range" id="bgmcOff" min="0" max="2000" step="5" value="0" />
+        <p class="hint">第一拍落在音乐的第几毫秒。</p>
+      </div>
+      <div class="btns">
+        <button type="button" id="bgmcPlay" class="ghost">▶ 试听</button>
+        <button type="button" id="bgmcSave" class="primary">保存并使用</button>
+        <button type="button" id="bgmcCancel" class="ghost">取消</button>
+      </div>
+    </div>
+  </div>
+
   <!-- 游戏页 -->
   <div id="play" class="screen hidden">
     <canvas id="game"></canvas>
@@ -261,12 +295,13 @@
     </div>
   </div>
 
-  <script src="js/rng.js?v=45"></script>
-  <script src="js/generator.js?v=45"></script>
-  <script src="js/bgm.js?v=45"></script>
-  <script src="js/audio.js?v=45"></script>
-  <script src="js/game.js?v=45"></script>
-  <script src="js/ui.js?v=45"></script>
+  <script src="js/rng.js?v=46"></script>
+  <script src="js/generator.js?v=46"></script>
+  <script src="js/bgm.js?v=46"></script>
+  <script src="js/bgmuser.js?v=46"></script>
+  <script src="js/audio.js?v=46"></script>
+  <script src="js/game.js?v=46"></script>
+  <script src="js/ui.js?v=46"></script>
   <script>
   /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
   if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
@@ -279,7 +314,7 @@
   /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
      不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
   (function () {
-    var WANT = '45';
+    var WANT = '46';
     var MG = window.MG || {};
     var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
     if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }

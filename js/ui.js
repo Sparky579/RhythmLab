@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '45';
+  const BUILD = '46';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -99,6 +99,201 @@
   function lockScroll(on) {
     if (on) { scrollSave = window.scrollY || 0; document.body.classList.add('playing'); }
     else { document.body.classList.remove('playing'); window.scrollTo(0, scrollSave); }
+  }
+
+
+  /* ---------- 我的音乐（用户上传） ---------- */
+  let userEntries = [];          // 自定义 BGM 条目，跟内置的拼在一起进下拉框
+  let userBgmLoaded = false;     // IndexedDB 是异步的，加载完之前别把选中项重置掉
+  let pending = null;            // 确认面板正在处理的这一首
+  let preview = null;            // 试听用的音频节点
+
+  function allBgms() { return MG.BGMS.concat(userEntries); }
+
+  function renderBgmSelect() {
+    const sel = $('bgm');
+    if (!sel) return;
+    const keep = state.game.bgm;
+    sel.innerHTML = '';
+    // 先按组归拢再渲染，避免数组顺序把同一组拆成几段
+    const order = [], byGroup = {};
+    for (const b of allBgms()) {
+      const gname = b.group || '其他';
+      if (!byGroup[gname]) { byGroup[gname] = []; order.push(gname); }
+      byGroup[gname].push(b);
+    }
+    for (const gname of order) {
+      const box = document.createElement('optgroup');
+      box.label = gname;
+      for (const b of byGroup[gname]) {
+        const o = document.createElement('option');
+        o.value = b.id; o.textContent = b.name;
+        box.appendChild(o);
+      }
+      sel.appendChild(box);
+    }
+    if (MG.BGM_BY_ID[keep]) {
+      sel.value = keep;
+    } else if (!userBgmLoaded && /^user_/.test(keep)) {
+      // 自定义曲目还没从 IndexedDB 读出来：界面上先显示节拍器，
+      // 但不要改 state，等加载完这里会重渲染并选回去
+      sel.value = 'metro';
+      return;
+    } else {
+      sel.value = 'metro';
+    }
+    state.game.bgm = sel.value;
+    Object.assign(game.settings, state.game);
+  }
+
+  function reloadUserBgms() {
+    if (!MG.UserBgm) return Promise.resolve();
+    return MG.UserBgm.list().then((recs) => {
+      userBgmLoaded = true;
+      userEntries = recs.map(MG.UserBgm.toEntry);
+      for (const e of userEntries) MG.BGM_BY_ID[e.id] = e;
+      $('btnManageBgm').classList.toggle('hidden', !userEntries.length);
+      if (!userEntries.length) $('myBgmList').classList.add('hidden');
+      renderBgmSelect();
+      renderMyBgmList();
+    }).catch(() => {
+      // 存储不可用就当没有自定义曲目，但要放行选中项的兜底
+      userBgmLoaded = true;
+      renderBgmSelect();
+    });
+  }
+
+  function renderMyBgmList() {
+    const box = $('myBgmList');
+    box.innerHTML = '';
+    for (const e of userEntries) {
+      const row = document.createElement('div');
+      row.className = 'my-bgm-row';
+      row.innerHTML = `<span>${e.name}</span><small>${e.baseBpm} BPM</small>`;
+      const del = document.createElement('button');
+      del.type = 'button'; del.className = 'link'; del.textContent = '删除';
+      del.addEventListener('click', () => {
+        if (!confirm(`删除「${e.name}」？`)) return;
+        const rawId = e.id.slice(5);
+        MG.UserBgm.remove(rawId).then(() => {
+          delete MG.BGM_BY_ID[e.id];
+          if (state.game.bgm === e.id) { state.game.bgm = 'metro'; saveState(); }
+          return reloadUserBgms();
+        });
+      });
+      row.appendChild(del);
+      box.appendChild(row);
+    }
+  }
+
+  /* ---------- 上传与确认 ---------- */
+  function onPickFile(file) {
+    const hint = $('bgmUploadHint');
+    if (!file) return;
+    if (file.size > MG.UserBgm.MAX_BYTES) {
+      hint.textContent = `文件太大（${(file.size / 1048576).toFixed(1)}MB），上限 `
+        + `${MG.UserBgm.MAX_BYTES / 1048576}MB。截一段再传。`;
+      return;
+    }
+    hint.textContent = '正在解码并测速…';
+    const ctx = audio.ensure();
+    if (!ctx) { hint.textContent = '音频未就绪，先点一下页面再试。'; return; }
+    file.arrayBuffer()
+      .then((ab) => MG.UserBgm.analyze(ab, ctx).then((info) => ({ ab, info })))
+      .then(({ ab, info }) => {
+        hint.textContent = '';
+        pending = {
+          id: MG.UserBgm.newId(),
+          name: file.name.replace(/\.[^.]+$/, '').slice(0, 40) || '未命名',
+          blob: new Blob([ab], { type: file.type || 'audio/mpeg' }),
+          duration: info.duration,
+          bpm: Math.round(info.bpm),
+          startSec: info.startSec,
+          buffer: info.buffer,
+        };
+        openConfirm();
+      })
+      .catch((e) => { hint.textContent = '读不了这个文件：' + e.message; });
+  }
+
+  function openConfirm() {
+    $('bgmcName').textContent = `${pending.name} · ${Math.round(pending.duration)} 秒`;
+    const bpmEl = $('bgmcBpm'), offEl = $('bgmcOff');
+    bpmEl.value = pending.bpm; $('bgmcBpmOut').textContent = pending.bpm;
+    offEl.max = Math.round(60000 / Math.max(40, pending.bpm) * 2);
+    offEl.value = Math.round(pending.startSec * 1000);
+    $('bgmcOffOut').textContent = offEl.value + ' ms';
+    $('bgmConfirm').classList.remove('hidden');
+  }
+
+  function closeConfirm() {
+    stopPreview();
+    $('bgmConfirm').classList.add('hidden');
+    pending = null;
+  }
+
+  function stopPreview() {
+    if (!preview) return;
+    try { preview.src.stop(); } catch (e) { /* ignore */ }
+    for (const o of preview.clicks) { try { o.stop(); } catch (e) { /* ignore */ } }
+    preview = null;
+    $('bgmcPlay').textContent = '▶ 试听';
+  }
+
+  /* 试听：音乐照原速放，节拍器按当前 BPM 与起拍点叠上去 */
+  function startPreview() {
+    const ctx = audio.ensure();
+    if (!ctx || !pending) return;
+    stopPreview();
+    const bpm = +$('bgmcBpm').value, off = +$('bgmcOff').value / 1000;
+    const beat = 60 / bpm, SECS = 12;
+    const t0 = ctx.currentTime + 0.2;
+    const src = ctx.createBufferSource();
+    src.buffer = pending.buffer;
+    const g = ctx.createGain(); g.gain.value = 0.8;
+    src.connect(g); g.connect(audio.master || ctx.destination);
+    // 从第一拍前半秒起播，省得等前奏
+    const from = Math.max(0, off - 0.5);
+    src.start(t0, from);
+    const clicks = [];
+    for (let k = 0; ; k++) {
+      const at = t0 + (off - from) + k * beat;
+      if (at > t0 + SECS) break;
+      const o = ctx.createOscillator(), cg = ctx.createGain();
+      o.frequency.value = k % 4 === 0 ? 1600 : 1100;
+      cg.gain.setValueAtTime(0.0001, at);
+      cg.gain.exponentialRampToValueAtTime(0.5, at + 0.002);
+      cg.gain.exponentialRampToValueAtTime(0.0001, at + 0.05);
+      o.connect(cg); cg.connect(audio.master || ctx.destination);
+      o.start(at); o.stop(at + 0.06);
+      clicks.push(o);
+    }
+    src.stop(t0 + SECS);
+    preview = { src, clicks };
+    $('bgmcPlay').textContent = '■ 停止';
+    src.onended = () => { if (preview && preview.src === src) stopPreview(); };
+  }
+
+  function saveConfirm() {
+    if (!pending) return;
+    stopPreview();
+    const rec = {
+      id: pending.id, name: pending.name, blob: pending.blob,
+      duration: pending.duration,
+      bpm: Math.round(+$('bgmcBpm').value),
+      startSec: +$('bgmcOff').value / 1000,
+      addedAt: Date.now(),
+    };
+    MG.UserBgm.save(rec)
+      .then(() => reloadUserBgms())
+      .then(() => {
+        state.game.bgm = 'user_' + rec.id;
+        $('bgm').value = state.game.bgm;
+        Object.assign(game.settings, state.game);
+        saveState(); syncBgmHint(); refresh();
+        closeConfirm();
+      })
+      .catch((e) => { $('bgmUploadHint').textContent = '保存失败：' + e.message; });
   }
 
   /* ---------- 预设卡片 ---------- */
@@ -735,26 +930,7 @@
 
     const bgmSel = $('bgm');
     if (bgmSel) {
-      // 先按组归拢再渲染，避免数组顺序把同一组拆成几段
-      const order = [], byGroup = {};
-      for (const b of MG.BGMS) {
-        const gname = b.group || '其他';
-        if (!byGroup[gname]) { byGroup[gname] = []; order.push(gname); }
-        byGroup[gname].push(b);
-      }
-      for (const gname of order) {
-        const box = document.createElement('optgroup');
-        box.label = gname;
-        for (const b of byGroup[gname]) {
-          const o = document.createElement('option');
-          o.value = b.id;
-          o.textContent = b.name;
-          box.appendChild(o);
-        }
-        bgmSel.appendChild(box);
-      }
-      bgmSel.value = MG.BGM_BY_ID[state.game.bgm] ? state.game.bgm : 'metro';
-      state.game.bgm = bgmSel.value;
+      renderBgmSelect();
       bgmSel.addEventListener('change', (e) => {
         state.game.bgm = e.target.value;
         Object.assign(game.settings, state.game);
@@ -764,6 +940,32 @@
         saveState();
       });
     }
+
+    $('btnUploadBgm').addEventListener('click', () => $('bgmFile').click());
+    $('bgmFile').addEventListener('change', (e) => {
+      onPickFile(e.target.files && e.target.files[0]);
+      e.target.value = '';       // 同一个文件再选一次也要能触发
+    });
+    $('btnManageBgm').addEventListener('click', () => {
+      $('myBgmList').classList.toggle('hidden');
+    });
+    $('bgmcCancel').addEventListener('click', closeConfirm);
+    $('bgmcSave').addEventListener('click', saveConfirm);
+    $('bgmcPlay').addEventListener('click', () => (preview ? stopPreview() : startPreview()));
+    const bpmC = $('bgmcBpm'), offC = $('bgmcOff');
+    const syncC = () => {
+      $('bgmcBpmOut').textContent = (+bpmC.value).toFixed(1).replace(/\.0$/, '');
+      $('bgmcOffOut').textContent = offC.value + ' ms';
+    };
+    bpmC.addEventListener('input', () => { syncC(); stopPreview(); });
+    offC.addEventListener('input', () => { syncC(); stopPreview(); });
+    const scaleBpm = (k) => {
+      const v = Math.max(40, Math.min(240, +bpmC.value * k));
+      bpmC.value = v; syncC(); stopPreview();
+    };
+    $('bgmcHalf').addEventListener('click', () => scaleBpm(0.5));
+    $('bgmcDouble').addEventListener('click', () => scaleBpm(2));
+    reloadUserBgms();
 
     $('btnStart').addEventListener('click', startGame);
     $('btnFullscreen').addEventListener('click', toggleFullscreen);
