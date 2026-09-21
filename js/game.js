@@ -56,11 +56,12 @@
   class Game {
     constructor(canvas, audio) {
       this.canvas = canvas;
-      // desynchronized（低延迟画布）在部分安卓设备上会导致画面周期性停更，
-      // 而它只换来几毫秒延迟，所以默认关掉，需要时再开。
-      this.lowLatency = false;
+      // desynchronized（低延迟画布）默认开：少一层合成，输入到显示快几毫秒。
+      // 个别安卓设备上它会让画面周期性停更，遇到就去设置里关掉。
+      this.lowLatency = true;
       try {
-        this.lowLatency = localStorage.getItem('rhythmlab_lowlatency') === '1';
+        const v = localStorage.getItem('rhythmlab_lowlatency');
+        if (v !== null) this.lowLatency = v === '1';
       } catch (e) { /* ignore */ }
       this.ctx2d = canvas.getContext('2d', { alpha: false, desynchronized: this.lowLatency });
       this.audio = audio;

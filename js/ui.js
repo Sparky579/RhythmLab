@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '44';
+  const BUILD = '45';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -398,6 +398,7 @@
   }
   function showResult(res) {
     exitFullscreen();          // 一局打完就退出全屏，方便看结果和改设置
+    rollSeed();                // 每局一换，「再来一次」拿到的是新谱不是背下来的旧谱
     $('resultOverlay').classList.remove('hidden');
     syncOverlayScroll();
     $('resTitle').textContent = res.chart.challenge
@@ -709,7 +710,11 @@
 
     const ll = $('lowLatency');
     if (ll) {
-      try { ll.checked = localStorage.getItem('rhythmlab_lowlatency') === '1'; } catch (e) { /* ignore */ }
+      // 没存过就跟默认值（开），存过就按存的来
+      try {
+        const v = localStorage.getItem('rhythmlab_lowlatency');
+        ll.checked = v === null ? true : v === '1';
+      } catch (e) { ll.checked = true; }
       ll.addEventListener('change', (e) => {
         try { localStorage.setItem('rhythmlab_lowlatency', e.target.checked ? '1' : '0'); } catch (err) { /* ignore */ }
         location.reload();
@@ -785,6 +790,16 @@
     window.addEventListener('resize', () => {
       if (!$('setup').classList.contains('hidden') && chart) drawPreview(chart);
     });
+  }
+
+  /* 换一个种子并重算谱面。设置页的种子框与预览同步更新，
+     这样无论是点「再来一次」还是退回设置页，拿到的都是同一张新谱。 */
+  function rollSeed() {
+    state.seed = randomSeed();
+    const el = $('seed');
+    if (el) el.value = state.seed;
+    saveState();
+    try { chart = G.generate(genOpts()); } catch (e) { chart = null; }
   }
 
   function randomSeed() {
