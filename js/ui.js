@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '41';
+  const BUILD = '42';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -38,6 +38,9 @@
       const s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
       if (s && typeof s === 'object') {
         Object.assign(state, s, { game: Object.assign({}, MG.GAME_DEFAULTS, s.game || {}) });
+        // 老存档里留白还是 28px，而取消恰好密集发生在离屏幕边缘 40–80px 处，
+        // 停在旧默认值上的一律抬到新默认值（自己调过的不动）
+        if (s.game && s.game.edgeMargin === 28) state.game.edgeMargin = MG.GAME_DEFAULTS.edgeMargin;
         if (!Array.isArray(state.mixedPool) || !state.mixedPool.length) state.mixedPool = G.FANCY_KEYS.slice();
         state.mixedPool = state.mixedPool.filter(k => G.FANCY_KEYS.indexOf(k) >= 0);
         if (!state.mixedPool.length) state.mixedPool = G.FANCY_KEYS.slice();
