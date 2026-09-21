@@ -37,6 +37,10 @@
       name: '交互收拢', group: 'trill', kind: 'trill', mode: 'converge',
       desc: '两手间距随乐句缩到 0，末尾变纵连',
     },
+    trill_jack: {
+      name: '纵连', group: 'trill', kind: 'jackline',
+      desc: '整小节全在同一轨，逐小节换轨（换轨距离可调）',
+    },
 
     /* ---- 切 ---- */
     stream_single: {
@@ -548,6 +552,22 @@
     return pp;
   }
 
+  /* 纵连换轨：不连着两小节用同一轨，否则整段变成一条不断的纵连。
+     shiftAmount 控制跳多远：0 只挪到相邻轨，1 可以横跨整个键位。 */
+  function pickJackCol(ctx, opts) {
+    const K = ctx.K, rng = ctx.rng;
+    const prev = ctx.jackCol;
+    if (prev === undefined) return rng.int(0, K - 1);
+    const span = Math.max(1, Math.round(lerp(1, K - 1, clamp(+opts.shiftAmount || 0, 0, 1))));
+    const cand = [];
+    for (let c = 0; c < K; c++) {
+      if (c === prev) continue;
+      if (Math.abs(c - prev) <= span) cand.push(c);
+    }
+    if (!cand.length) return (prev + 1) % K;
+    return cand[rng.int(0, cand.length - 1)];
+  }
+
   /* 换气：休息段前后只放开两手的移动速度限制（允许瞬移换位），
      列约束（不共列 / 必共列 / 不同列）保持连续，否则边界处会冒出假纵连 */
   function breathe(ctx) {
@@ -611,12 +631,19 @@
       }
       if (isRest) breathe(ctx);
 
+      // 纵连：整小节钉在一条轨上，进小节时换一次
+      if (preset.kind === 'jackline') ctx.jackCol = pickJackCol(ctx, opts);
+
       const mBeat = 60 / tempo.measureBpm[m];
       for (let b = 0; b < 4; b++) {
         for (let r = 0; r < div; r++) {
           const t = tempo.measureTime[m] + (b + r / div) * mBeat;
           if (preset.kind === 'trill') {
             genTrillNote(ctx, preset, pp, t);
+          } else if (preset.kind === 'jackline') {
+            const mask = 1 << ctx.jackCol;
+            commitRow(ctx, mask);
+            pushRow(ctx, mask, t);
           } else {
             const mask = genRow(ctx, preset, pp, r, div, isRest);
             commitRow(ctx, mask);

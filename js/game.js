@@ -42,7 +42,6 @@
     laneSlackPx: 12,     // 轨道判定余量：落点越过轨道边线这么多像素内仍算这一轨
     minimalFx: false,    // 极简画面：去掉拍线、按下高亮、打击特效，只留音符与判定线
     inputDebug: false,   // 画面左上角实时显示输入统计，用来排查断触
-    autoCalibrate: false,// 默认不动偏移；要用的话在设置里打开，或在结果页手动点一次
     // 渲染分辨率上限。手机屏幕常到 3 倍密度，一帧要填的像素量是主要开销，
     // 而且这部分发生在合成线程（也就是诊断里「我的代码之外」那一项）。
     maxDpr: (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) ? 1.5 : 2,

@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '42';
+  const BUILD = '43';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -497,14 +497,6 @@
     if (res.autoplay || res.suggestOffset === null || res.suggestOffset === undefined) return '';
     const cur = state.game.offsetMs, want = res.suggestOffset, delta = want - cur;
     if (Math.abs(delta) < 8) return '<br>判定偏移已经对准，无需调整。';
-    if (state.game.autoCalibrate) {
-      state.game.offsetMs = want;
-      Object.assign(game.settings, state.game);
-      const el = $('offsetMs');
-      if (el) { el.value = want; $('offsetOut').textContent = (want > 0 ? '+' : '') + want + ' ms'; }
-      saveState();
-      return `<br><span style="color:#5ee8b0">判定偏移已自动从 ${cur} 调到 ${want} ms（你平均偏${delta > 0 ? '早' : '晚'} ${Math.abs(delta)}ms）</span>`;
-    }
     return `<br>本局平均偏${delta > 0 ? '早' : '晚'} ${Math.abs(delta)}ms，`
       + `<button type="button" id="btnCalib" class="link">要的话点这里把判定偏移调到 ${want} ms</button>`;
   }
@@ -726,7 +718,7 @@
       });
     }
 
-    for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoCalibrate', 'autoFullscreen', 'minimalFx', 'inputDebug']) {
+    for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoFullscreen', 'minimalFx', 'inputDebug']) {
       if (!$(id)) continue;
       $(id).checked = !!state.game[id];
       $(id).addEventListener('change', (e) => {
