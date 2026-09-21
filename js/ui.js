@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '43';
+  const BUILD = '44';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -414,7 +414,8 @@
       (res.emptyMiss ? ` · 空打 ${res.emptyMiss}` : '') +
       `<br>平均偏差 <b>${mean >= 0 ? '+' : ''}${mean.toFixed(1)} ms</b>（${mean >= 0 ? '偏晚' : '偏早'}）· 标准差 ${res.stdOffset.toFixed(1)} ms` +
       `<br>提前 ${res.early} · 延后 ${res.late} · 判定 ${res.perfectMs}/${res.greatMs} ms · 种子码 ${res.chart.seedHash.toString(16)}` +
-      (res.autoplay ? '<br>自动演奏' : inputLine(res)) +
+      (res.autoplay ? '<br>自动演奏' : '') +
+      (state.game.inputDebug ? inputLine(res) : '') +
       calibLine(res) +
       challengeLine(res);
     const dg = $('btnDiag');
@@ -442,7 +443,6 @@
     const hits = res.counts[0] + res.counts[1];
     let line = `<br>击打输入 <b>${res.taps}</b> 次 · 命中 ${hits} · 打空 ${res.emptyTaps}`;
     if (res.assistHits) line += ` · 边缘容错救回 ${res.assistHits}`;
-    // 断触是玩家必须知道的，但一句话就够；其余排查指标收进「输入诊断」
     const gaps = res.rawGaps || [];
     if (gaps.length) {
       const total = (gaps.reduce((a, x) => a + x[1], 0) / 1000).toFixed(1);
@@ -450,8 +450,7 @@
       line += `<br><span style="color:#ffb86b">本局有 ${gaps.length} 段收不到触摸，`
         + `共 ${total} 秒（最长 ${worst}ms）</span>`;
     }
-    if (state.game.inputDebug) line += diagLines(res);
-    return line;
+    return line + diagLines(res);
   }
 
   /* 排查用的详细指标，只在打开「输入诊断」时出现 */
@@ -497,8 +496,7 @@
     if (res.autoplay || res.suggestOffset === null || res.suggestOffset === undefined) return '';
     const cur = state.game.offsetMs, want = res.suggestOffset, delta = want - cur;
     if (Math.abs(delta) < 8) return '<br>判定偏移已经对准，无需调整。';
-    return `<br>本局平均偏${delta > 0 ? '早' : '晚'} ${Math.abs(delta)}ms，`
-      + `<button type="button" id="btnCalib" class="link">要的话点这里把判定偏移调到 ${want} ms</button>`;
+    return `<br><button type="button" id="btnCalib" class="link">校准判定偏移到 ${want} ms</button>`;
   }
 
   /* 把本局所有诊断数字拼成一段纯文本，方便直接发出来，不用人工抄 */
