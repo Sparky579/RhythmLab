@@ -629,12 +629,17 @@
       `最大连击 <b>${res.maxCombo}</b> / ${res.total}` +
       (res.emptyMiss ? ` · 空打 ${res.emptyMiss}` : '') +
       `<br>平均偏差 <b>${mean >= 0 ? '+' : ''}${mean.toFixed(1)} ms</b>（${mean >= 0 ? '偏晚' : '偏早'}）· 标准差 ${res.stdOffset.toFixed(1)} ms` +
-      `<br>提前 ${res.early} · 延后 ${res.late} · 判定 ${res.perfectMs}/${res.greatMs} ms · 种子码 ${res.chart.seedHash.toString(16)}` +
+      `<br>提前 ${res.early} · 延后 ${res.late} · 判定 ${res.perfectMs}/${res.greatMs} ms` +
       (res.autoplay ? '<br>自动演奏' : '') +
-      (state.game.inputDebug ? inputLine(res) : '') +
+      (state.game.inputDebug ? `<br>种子码 ${res.chart.seedHash.toString(16)}` + inputLine(res) : '') +
       calibLine(res) +
       challengeLine(res);
+    // 「复制诊断数据」和种子码都是排查用的，不开输入诊断时结束页只剩成绩本身
     const dg = $('btnDiag');
+    if (dg) dg.classList.toggle('hidden', !state.game.inputDebug);
+    // 剪贴板不可用时退回的那个文本框会一直留在卡片里，换一局也不清——顺手收掉
+    const stale = $('diagBox');
+    if (stale && !state.game.inputDebug) stale.remove();
     if (dg) dg.onclick = () => {
       const txt = diagText(res);
       const done = () => { dg.textContent = '已复制，直接粘贴发出即可'; };
