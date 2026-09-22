@@ -112,7 +112,9 @@
             <button type="button" id="btnUploadBgm" class="ghost">＋ 上传音乐</button>
             <button type="button" id="btnManageBgm" class="ghost hidden">管理我的音乐</button>
           </div>
-          <input type="file" id="bgmFile" accept="audio/*" class="hidden" />
+          <!-- 不能用 display:none：部分手机浏览器会拒绝对隐藏 input 的 .click()。
+               挪到视口外、留着可见性，点击才稳。 -->
+          <input type="file" id="bgmFile" accept="audio/*" class="offscreen" />
           <p class="hint" id="bgmUploadHint"></p>
           <div id="myBgmList" class="my-bgm hidden"></div>
           <label style="margin-top:8px">BGM 音量 <output id="bgmVolumeOut">100%</output></label>

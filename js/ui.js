@@ -187,6 +187,34 @@
   }
 
   /* ---------- 上传与确认 ---------- */
+  /* 原生壳的版本。旧壳（/3 及以前）没实现 onShowFileChooser，
+     页面里的 <input type="file"> 点下去连事件都不会产生——就是「啥反应都没有」。
+     没法从 JS 侧补救，只能把原因说清楚并指路。 */
+  const SHELL_FILE_OK = 4;
+  function shellVersion() {
+    const m = /RhythmLabShell\/(\d+)/.exec(navigator.userAgent || '');
+    return m ? +m[1] : 0;
+  }
+  function uploadUnsupportedReason() {
+    const v = shellVersion();
+    if (v && v < SHELL_FILE_OK) {
+      return '这个版本的安卓 App 不支持选文件（WebView 默认就不处理，点了没有任何反应）。'
+        + '请回站点下载新版 APK，或先用手机浏览器打开上传一次——曲目存在本机，两边各存各的。';
+    }
+    return '';
+  }
+
+  /* file.arrayBuffer() 在老 Safari / 老 WebView 上没有，退回 FileReader */
+  function readArrayBuffer(file) {
+    if (file.arrayBuffer) return file.arrayBuffer();
+    return new Promise((res, rej) => {
+      const r = new FileReader();
+      r.onload = () => res(r.result);
+      r.onerror = () => rej(r.error || new Error('读不出文件内容'));
+      r.readAsArrayBuffer(file);
+    });
+  }
+
   function onPickFile(file) {
     const hint = $('bgmUploadHint');
     if (!file) return;
@@ -198,7 +226,7 @@
     hint.textContent = '正在解码并测速…';
     const ctx = audio.ensure();
     if (!ctx) { hint.textContent = '音频未就绪，先点一下页面再试。'; return; }
-    file.arrayBuffer()
+    readArrayBuffer(file)
       .then((ab) => MG.UserBgm.analyze(ab, ctx).then((info) => ({ ab, info })))
       .then(({ ab, info }) => {
         hint.textContent = '';
@@ -220,7 +248,9 @@
     $('bgmcName').textContent = `${pending.name} · ${Math.round(pending.duration)} 秒`;
     const bpmEl = $('bgmcBpm'), offEl = $('bgmcOff');
     bpmEl.value = pending.bpm; $('bgmcBpmOut').textContent = pending.bpm;
-    offEl.max = Math.round(60000 / Math.max(40, pending.bpm) * 2);
+    // 一整小节：测速只定得出「拍」的相位，定不出哪一拍是重拍。
+    // 范围只给 2 拍的话，重拍差了一拍半就调不回来了（试听的咔哒声每 4 拍加重，听得出来）。
+    offEl.max = Math.round(60000 / Math.max(40, pending.bpm) * 4);
     offEl.value = Math.round(pending.startSec * 1000);
     $('bgmcOffOut').textContent = offEl.value + ' ms';
     $('bgmConfirm').classList.remove('hidden');
@@ -967,7 +997,12 @@
       });
     }
 
-    $('btnUploadBgm').addEventListener('click', () => $('bgmFile').click());
+    $('btnUploadBgm').addEventListener('click', () => {
+      const why = uploadUnsupportedReason();
+      if (why) { $('bgmUploadHint').textContent = why; return; }
+      $('bgmUploadHint').textContent = '';
+      $('bgmFile').click();
+    });
     $('bgmFile').addEventListener('change', (e) => {
       onPickFile(e.target.files && e.target.files[0]);
       e.target.value = '';       // 同一个文件再选一次也要能触发

@@ -1,13 +1,17 @@
 package ren.pekka.rhythmlab;
 
 import android.app.Activity;
+import android.content.Intent;
 import android.graphics.Rect;
+import android.net.Uri;
 import android.os.Build;
 import android.os.Bundle;
 import android.os.SystemClock;
 import android.view.MotionEvent;
 import android.view.View;
 import android.view.WindowManager;
+import android.webkit.ValueCallback;
+import android.webkit.WebChromeClient;
 import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebSettings;
@@ -23,13 +27,15 @@ import java.util.List;
 /**
  * RhythmLab 安卓壳。
  *
- * 它只解决网页端解决不了的三件事：
+ * 它只解决网页端解决不了的这几件事：
  *   1. setSystemGestureExclusionRects —— 把屏幕左右边缘从系统手势里划出来，
  *      安卓手势导航不再抢走最外侧轨道的触摸（网页端只能靠留白躲开）。
  *   2. 原生 MotionEvent 直采 —— 在 Activity 层拿到每一个 ACTION_DOWN /
  *      ACTION_POINTER_DOWN，用 event.getEventTime() 的真实时刻转发给 JS，
  *      不经过 WebView 的 DOM 事件管线。
  *   3. 常亮 + 沉浸式全屏 —— 没有地址栏伸缩、没有下拉刷新。
+ *   4. onShowFileChooser —— WebView 默认根本不处理 <input type="file">，
+ *      点了没有任何反应（连报错都没有）。上传自己的音乐必须靠它。
  *
  * 原生事件不消费（dispatchTouchEvent 照常下发），所以 DOM 事件仍然存在，
  * JS 端一旦发现原生事件没来会自动退回 DOM 模式，不至于整个玩不了。
@@ -41,6 +47,11 @@ public class MainActivity extends Activity {
      *  这样 origin 是正常的 https，fetch 音频不会被 file:// 的同源策略挡住。 */
     private static final String ORIGIN = "https://rhythmlab.local/";
     private static final float MOVE_EPS_DP = 6f;
+    private static final int REQ_FILE = 1001;
+
+    /** 正在等结果的 <input type="file">。必须保证每一条路径都回调一次，
+     *  哪怕用户按了返回 —— 不回调的话这个 input 之后再点就永远没反应了。 */
+    private ValueCallback<Uri[]> filePicker;
 
     private float density = 2f;
     private boolean exclusionOk = false;
@@ -60,7 +71,7 @@ public class MainActivity extends Activity {
         st.setMediaPlaybackRequiresUserGesture(false);
         // UA 打个标记：页面据此知道自己跑在原生壳里，桥没注入上时也能把问题显出来
         web.addJavascriptInterface(new Shell(), "RLShell");
-        st.setUserAgentString(st.getUserAgentString() + " RhythmLabShell/3");
+        st.setUserAgentString(st.getUserAgentString() + " RhythmLabShell/4");
         st.setSupportZoom(false);
         st.setBuiltInZoomControls(false);
         st.setCacheMode(WebSettings.LOAD_NO_CACHE);
@@ -69,6 +80,32 @@ public class MainActivity extends Activity {
         web.setLongClickable(false);
         web.setHapticFeedbackEnabled(false);
         WebView.setWebContentsDebuggingEnabled(true);
+
+        /* WebView 不自带文件选择：不实现这个回调，页面里的 <input type="file">
+           点下去什么都不会发生。上传音乐就是这么「没反应」的。 */
+        web.setWebChromeClient(new WebChromeClient() {
+            @Override
+            public boolean onShowFileChooser(WebView v, ValueCallback<Uri[]> cb,
+                                             FileChooserParams params) {
+                if (filePicker != null) filePicker.onReceiveValue(null);
+                filePicker = cb;
+                Intent pick = null;
+                try { pick = params.createIntent(); } catch (Throwable ignored) { }
+                if (pick == null) {
+                    pick = new Intent(Intent.ACTION_GET_CONTENT);
+                    pick.addCategory(Intent.CATEGORY_OPENABLE);
+                    pick.setType("audio/*");
+                }
+                try {
+                    startActivityForResult(Intent.createChooser(pick, "选择音乐"), REQ_FILE);
+                    return true;
+                } catch (Throwable t) {
+                    // 装不出选择器：交回 null 让 WebView 自己收场，别把 input 卡死
+                    filePicker = null;
+                    return false;
+                }
+            }
+        });
 
         web.setWebViewClient(new WebViewClient() {
             @Override
@@ -352,6 +389,19 @@ public class MainActivity extends Activity {
         // 攒太多就立刻发，别让一帧内的爆发拖到下一帧
         if (batchCount >= 32) { web.removeCallbacks(flush); flush.run(); return; }
         if (!flushScheduled) { flushScheduled = true; web.post(flush); }
+    }
+
+    @Override
+    protected void onActivityResult(int req, int res, Intent data) {
+        if (req != REQ_FILE) { super.onActivityResult(req, res, data); return; }
+        ValueCallback<Uri[]> cb = filePicker;
+        filePicker = null;
+        if (cb != null) {
+            // 取消（RESULT_CANCELED）也要回一次 null，否则 input 永久卡在「选择中」
+            cb.onReceiveValue(res == RESULT_OK
+                    ? WebChromeClient.FileChooserParams.parseResult(res, data) : null);
+        }
+        applyImmersive();   // 选择器是另一个 Activity，回来时系统栏还露在外面
     }
 
     @Override protected void onResume() { super.onResume(); applyImmersive(); }

@@ -31,6 +31,12 @@ body.playing { position: fixed; inset: 0; width: 100%; height: 100%; overflow: h
 button, input, select { font: inherit; color: inherit; }
 h1, h2, h3 { margin: 0; font-weight: 700; }
 .hidden { display: none !important; }
+/* 仍然参与布局、仍然可点，只是看不见：display:none 的 <input type=file>
+   在一些手机浏览器上 .click() 是无效的 */
+.offscreen {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; opacity: 0;
+}
 .muted { color: var(--muted); font-weight: 400; font-size: 0.8em; }
 
 /* ---------- 设置页 ---------- */
