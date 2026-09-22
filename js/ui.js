@@ -455,8 +455,8 @@
       trill_axis: zero ? '反手也钉死不动，两手都在原地' : '反手往返的摆幅',
       trill_converge: zero ? '起始间距就是 0，整段是原地纵连' : '收拢的起始间距',
       trill_jack: zero ? '整首钉在同一条轨上，永不换轨' : '换轨最多跳几条',
-    }[isMixed() ? 'trill_basic' : state.preset];
-    return `当前 ${pct}：${what || '两手的活动范围'}。`
+    }[isMixed() ? '' : state.preset];
+    return `当前 ${pct}：${what || '每个交互 / 纵连乐句各自的活动范围'}。`
       + (zero ? '0% 就是全程零位移，乐句之间也不再重抽位置。' : '');
   }
 

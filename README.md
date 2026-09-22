@@ -323,3 +323,13 @@ BPM 从起点逐段爬到目标，用来找自己的上限。
 - `js/ui.js` 设置面板、预览、结果页
 - `serve.py` 带 no-cache 头的静态服务（systemd `pekka-music.service` 用它）
 - `deploy.sh` 同步到线上目录
+
+## 自检
+
+```bash
+node tools/test_gen.js      # 全预设 × BPM × 键数 × 种子：可复现性、硬约束、押海、无轨坐标
+node tools/test_shift.js    # 位移幅度 0 = 零位移；幅度 1 用满键区
+node tools/test_tempo.js    # 上传测速：合成节拍信号的 BPM 与相位
+python3 tools/test_free.py  # 无轨端到端（需先起 8931 端口的静态服务 + playwright）
+python3 tools/test_upload.py# 上传端到端：测速 → 保存 → 刷新仍在 → 删除
+```
