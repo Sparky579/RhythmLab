@@ -73,7 +73,7 @@
       this.onPauseChange = null;
       this.W = 0; this.H = 0; this.dpr = 1;
       this.rect = null;
-      this.effects = new Array(64).fill(null).map(() => ({ t0: -1, kind: 0, lane: 0 }));
+      this.effects = new Array(64).fill(null).map(() => ({ t0: -1, kind: 0, lane: 0, x: 0, y: 0 }));
       this.effectPtr = 0;
       this.errors = new Array(48).fill(null).map(() => ({ off: 0, t0: -1, kind: 0 }));
       this.errorPtr = 0;
@@ -150,8 +150,30 @@
       this.edgeMarginPx = (this.W - laneW * K) / 2;
       this.noteH = clamp(laneW * 0.26, 12, 28);
       this.judgePx = this.H * this.settings.judgeY;
+      this._layoutFree(margin);
     }
     laneCenter(lane) { return this.laneX0 + (lane + 0.5) * this.laneW; }
+
+    /* 无轨场地。谱面里的 nx / ny 是按一个固定长宽比（chart.aspect）生成的，
+       不重叠是按那个比例算出来的 —— 直接拉伸到屏幕比例会把纵向距离压扁，
+       原本刚好贴住的两个按键就叠上了。所以这里把场地按原比例装进可用区域里居中，
+       宽或高哪边先到头就以哪边为准，另一边留边。 */
+    _layoutFree(margin) {
+      const ch = this.chart;
+      const aspect = (ch && ch.aspect) || 0.5;
+      const availW = Math.max(40, this.W - margin * 2);
+      // 顶上让出一条给分数 / 连击，底下让出一点给暂停键
+      const top = Math.max(44, this.H * 0.12), bottom = Math.max(10, this.H * 0.05);
+      const availH = Math.max(40, this.H - top - bottom);
+      let fw = availW, fh = fw * aspect;
+      if (fh > availH) { fh = availH; fw = fh / aspect; }
+      this.freeW = fw; this.freeH = fh;
+      this.freeX0 = (this.W - fw) / 2;
+      this.freeY0 = top + (availH - fh) / 2;
+      this.freeR = fw * ((ch && ch.noteD) || 1 / 6) / 2;
+    }
+    freePx(n) { return this.freeX0 + n.nx * this.freeW; }
+    freePy(n) { return this.freeY0 + n.ny * this.freeH; }
 
     /* ---------- 输入绑定 ---------- */
     _bind() {
@@ -263,6 +285,7 @@
         }
         const ts = this._evtTime(e);
         each(e.changedTouches, (t) => {
+          if (this.free) { this.inputPoint(t.clientX, t.clientY, ts); return; }
           const pos = this._lanePos(t.clientX);
           this.touches.set(t.identifier, { lane: pos.lane, x: t.clientX });
           this.inputLane(pos.lane, ts, pos.frac);
@@ -274,6 +297,8 @@
       // 浏览器每次都同步等 JS 返回，还会禁用事件合并。滚动已由 touch-action:none 挡住。
       root.addEventListener('touchmove', (e) => {
         if (this.nativeMode) return;
+        // 无轨没有轨道边界可滑过，一个按键就得点一下，滑动不产生击打
+        if (this.free) return;
         const ts = this._evtTime(e);
         each(e.changedTouches, (t) => {
           const prev = this.touches.get(t.identifier);
@@ -299,6 +324,7 @@
         // 触摸会派生一次鼠标事件，若放行会把同一轨的下一个音符提前吃掉
         if (performance.now() - this.lastTouchAt < 700) return;
         e.preventDefault();
+        if (this.free) { this.inputPoint(e.clientX, e.clientY, this._evtTime(e)); return; }
         const pos = this._lanePos(e.clientX);
         this.inputLane(pos.lane, this._evtTime(e), pos.frac);
       });
@@ -307,8 +333,10 @@
         if (e.repeat) return;
         if (this.state === 'idle' || this.state === 'finished') return;
         if (e.code === 'Escape') { e.preventDefault(); this.togglePause(); return; }
-        if (!this.chart) return;
-        const lane = KEYMAP[this.keys].codes.indexOf(e.code);
+        if (!this.chart || this.free) return;   // 无轨没有键位可映射，键盘天然打不了
+        const km = KEYMAP[this.keys];
+        if (!km) return;
+        const lane = km.codes.indexOf(e.code);
         if (lane >= 0) { e.preventDefault(); this.inputLane(lane, this._evtTime(e)); }
       });
       window.addEventListener('keyup', (e) => {
@@ -347,7 +375,10 @@
 
     /* 原生壳直采的触摸：type 为 d/m/u，x 是 CSS 像素，age 是事件排队了多久。
        用 performance.now() - age 还原真实按下时刻，精度不受 WebView 事件管线影响。 */
-    nativeTouch(type, id, cssX, ageMs) {
+    nativeTouch(type, id, cssX, ageMs, cssY) {
+      // 无轨要 y 坐标。旧壳（RhythmLabShell/4 之前）只转发 x，这里直接不接管，
+      // 让 DOM 那一路照常跑 —— 总比拿不到 y 判不了要好。
+      if (this.free && (cssY === undefined || cssY === null || !isFinite(cssY))) return;
       this.nativeSeen++;
       this.lastNativeAt = performance.now();
       this.nativeMode = true;
@@ -364,6 +395,11 @@
       const ts = this.lastNativeAt - (+ageMs || 0);
       const key = 'n' + id;
       if (type === 'u') { this.touches.delete(key); return; }
+      if (this.free) {
+        // 原生坐标是相对窗口的 CSS 像素，和 clientX/clientY 同一套
+        if (type === 'd') this.inputPoint(+cssX, +cssY, ts);
+        return;
+      }
       const pos = this._lanePos(+cssX);
       if (type === 'd') {
         this.touches.set(key, { lane: pos.lane, x: +cssX });
@@ -412,6 +448,7 @@
     load(chart) {
       this.chart = chart;
       this.keys = chart.keys;
+      this.free = !!chart.free;
       const n = chart.notes.length;
       this.status = new Int8Array(n);      // 0 待判 1 命中 2 miss
       this.judge = new Int8Array(n);       // 0 perfect 1 great 2 miss
@@ -427,6 +464,7 @@
       this.touches.clear();
       this.taps = 0; this.emptyTaps = 0; this.assistHits = 0;
       this.tsAnomalies = 0; this.stateDrops = 0; this.lastDt = null;
+      this.lastTapAt = 0; this.lastTapX = 0; this.lastTapY = 0;
       this.offSum = 0; this.offCount = 0;
       // 输入日志用定长数组做环形缓冲：原来每次击打 push 一个新数组，
       // 狂按时是一笔持续的垃圾来源
@@ -663,6 +701,70 @@
       this.logN++;
     }
 
+    /* ---------- 无轨：按落点判定 ---------- */
+    /* 点到哪个按键就打哪个。同一个位置上可能叠着好几个不同时刻的按键，
+       所以先按「离判定时刻多近」排，再按「离落点多近」排。 */
+    inputPoint(clientX, clientY, ts) {
+      if (this.state !== 'playing' && this.state !== 'countin') {
+        if (this.state === 'paused' || this.state === 'resuming') this.stateDrops++;
+        return;
+      }
+      if (!this.chart) return;
+      this.taps++;
+      const r = this._rect();
+      const nx = (clientX - r.left - this.freeX0) / this.freeW;
+      const ny = (clientY - r.top - this.freeY0) / this.freeH;
+      this.lastTapX = clientX - r.left; this.lastTapY = clientY - r.top;
+      this.lastTapAt = performance.now();
+      const ct = this._tInput(ts);
+      this._judgePoint(nx, ny, ct);
+      const li = this.logN % this.logCap;
+      this.logT[li] = ct * 1000;
+      this.logLane[li] = 0;
+      this.logDt[li] = this.lastDt === null ? NaN : this.lastDt;
+      this.logN++;
+    }
+
+    _findNoteAt(nx, ny, t) {
+      const notes = this.chart.notes, n = notes.length, st = this.status;
+      const win = this.greatMs / 1000;
+      // 判定半径 = 按键半径 + 余量（沿用轨道那套「轨道判定余量」的像素值）
+      const slack = Math.max(0, +this.settings.laneSlackPx || 0) / Math.max(1, this.freeW);
+      const rad = this.chart.noteD / 2 + slack;
+      const aspect = this.freeH / this.freeW;
+      let best = -1, bestDt = Infinity, bestD = Infinity;
+      for (let i = this.nextIdx; i < n; i++) {
+        const nt = notes[i];
+        if (nt.t > t + win) break;
+        if (st[i] !== 0 || nt.t < t - win) continue;
+        const dx = nt.nx - nx, dy = (nt.ny - ny) * aspect;
+        const d = Math.sqrt(dx * dx + dy * dy);
+        if (d > rad) continue;
+        const adt = Math.abs(nt.t - t);
+        if (adt < bestDt - 1e-9 || (Math.abs(adt - bestDt) <= 1e-9 && d < bestD)) {
+          best = i; bestDt = adt; bestD = d;
+        }
+      }
+      return best;
+    }
+
+    _judgePoint(nx, ny, t) {
+      const best = this._findNoteAt(nx, ny, t);
+      if (this.settings.hitSound) this.audio.play('hit', 0);
+      if (best < 0) {
+        this.emptyTaps++;
+        this.lastDt = null;
+        if (this.settings.missOnEmpty && this.state === 'playing') {
+          this.emptyMiss++; this.combo = 0; this._showJudge(2, 0);
+        }
+        return;
+      }
+      const dtMs = (t - this.chart.notes[best].t) * 1000;
+      this.lastDt = dtMs;
+      this.offSum += dtMs; this.offCount++;
+      this._resolve(best, Math.abs(dtMs) <= this.perfectMs ? 0 : 1, dtMs);
+    }
+
     /* 该轨窗口内最早的未判音符 */
     _findNote(lane, t) {
       const notes = this.chart.notes, n = notes.length, st = this.status;
@@ -723,6 +825,7 @@
       if (kind !== 2) {
         const e = this.effects[this.effectPtr++ % this.effects.length];
         e.t0 = performance.now(); e.kind = kind; e.lane = nt.col;
+        if (this.free) { e.x = this.freePx(nt); e.y = this.freePy(nt); }
         const er = this.errors[this.errorPtr++ % this.errors.length];
         er.off = dtMs; er.t0 = e.t0; er.kind = kind;
       }
@@ -993,6 +1096,7 @@
     }
 
     _draw(now, perfNow) {
+      if (this.free && this.chart) return this._drawFree(now, perfNow);
       const g = this.ctx2d, W = this.W, H = this.H, S = this.settings;
       const chart = this.chart, K = this.keys;
       const judgeY = this.judgePx = H * S.judgeY;
@@ -1093,6 +1197,82 @@
       this._drawHUD(g, now, perfNow);
     }
 
+    /* 无轨的画面：没有轨道、没有拍线、没有判定线。
+       每个音符是一个固定大小的圆按键，外面套一圈收缩的提示环；
+       环收到和按键一样大的那一刻就是判定时刻 —— 时间信息全靠这圈环传达。 */
+    _drawFree(now, perfNow) {
+      const g = this.ctx2d, W = this.W, H = this.H, S = this.settings;
+      const chart = this.chart;
+      const approach = this.approachSec;
+      const R = this.freeR, fx = !S.minimalFx;
+
+      g.fillStyle = '#0b0d17';
+      g.fillRect(0, 0, W, H);
+      // 场地按谱面的长宽比装进屏幕，边上会留一点；把它衬出来，免得不知道哪儿能点
+      g.fillStyle = 'rgba(255,255,255,0.025)';
+      g.fillRect(this.freeX0, this.freeY0, this.freeW, this.freeH);
+
+      const notes = chart.notes, n = notes.length, st = this.status;
+      const showFrom = now - 0.25;
+      while (this.drawIdx < n && notes[this.drawIdx].t < showFrom) this.drawIdx++;
+      // 远的先画、近的后画，这样即将要打的那个永远压在最上面
+      const draw = [];
+      for (let i = this.drawIdx; i < n; i++) {
+        const dt = notes[i].t - now;
+        if (dt > approach) break;
+        if (st[i] === 1) continue;
+        draw.push(i);
+      }
+      for (let k = draw.length - 1; k >= 0; k--) {
+        const nt = notes[draw[k]], i = draw[k];
+        const dt = nt.t - now;
+        const px = this.freePx(nt), py = this.freePy(nt);
+        const p = clamp(1 - dt / approach, 0, 1);     // 0 刚出现，1 该打了
+        // 已经错过的：原地淡出
+        const gone = st[i] === 2 ? clamp(1 + dt / 0.25, 0, 1) : 1;
+        // 远的要明显淡：同时在屏上的按键不少，全按一个亮度会糊成一片
+        const near = p * p;
+        g.globalAlpha = gone * (st[i] === 2 ? 0.3 : 0.14 + 0.86 * near);
+        g.fillStyle = this.noteColor(nt);
+        g.beginPath(); g.arc(px, py, R, 0, Math.PI * 2); g.fill();
+        // 中间掏个暗心，多个按键叠在一起时边界还分得开
+        g.fillStyle = 'rgba(11,13,23,0.55)';
+        g.beginPath(); g.arc(px, py, R * 0.58, 0, Math.PI * 2); g.fill();
+        if (fx && st[i] !== 2) {
+          // 提示环：从 2.2 倍收到 1 倍，贴上按键那一刻就是判定时刻
+          g.strokeStyle = this.noteColor(nt);
+          g.lineWidth = Math.max(1.5, R * (0.05 + 0.07 * near));
+          g.globalAlpha = gone * (0.18 + 0.72 * near);
+          g.beginPath(); g.arc(px, py, R * (1 + 1.2 * (1 - p)), 0, Math.PI * 2); g.stroke();
+        }
+        g.globalAlpha = 1;
+      }
+
+      // 打击特效：原地扩散一圈
+      if (fx) for (const e of this.effects) {
+        if (e.t0 < 0) continue;
+        const p = (perfNow - e.t0) / 260;
+        if (p >= 1) { e.t0 = -1; continue; }
+        g.strokeStyle = JUDGE_COLORS[e.kind];
+        g.globalAlpha = 1 - p;
+        g.lineWidth = 4 * (1 - p) + 1;
+        g.beginPath(); g.arc(e.x, e.y, R * (0.9 + p * 0.9), 0, Math.PI * 2); g.stroke();
+        g.globalAlpha = 1;
+      }
+
+      // 落点回显：每一下点在哪儿都看得见，打空时一眼知道是偏了还是时机不对
+      if (fx && this.lastTapAt) {
+        const p = (perfNow - this.lastTapAt) / 220;
+        if (p < 1) {
+          g.strokeStyle = 'rgba(200,225,255,' + (0.7 * (1 - p)).toFixed(3) + ')';
+          g.lineWidth = 2;
+          g.beginPath(); g.arc(this.lastTapX, this.lastTapY, R * 0.35 * (1 + p), 0, Math.PI * 2); g.stroke();
+        }
+      }
+
+      this._drawHUD(g, now, perfNow);
+    }
+
     _drawHUD(g, now, perfNow) {
       const W = this.W, H = this.H, judgeY = this.judgePx;
       const total = this.chart.notes.length || 1;
@@ -1116,7 +1296,8 @@
       const bpmTxt = this.chart.challenge
         ? `${this.currentBpm} BPM → ${this.chart.bpmEnd}`
         : `${this.chart.bpm} BPM`;
-      g.fillText(`${this.chart.presetName} · ${this.keys}K · ${bpmTxt}`, W - 14, 38);
+      const modeTxt = this.free ? '无轨' : this.keys + 'K';
+      g.fillText(`${this.chart.presetName} · ${modeTxt} · ${bpmTxt}`, W - 14, 38);
 
       // 提速瞬间在中间闪一下，让人知道变快了
       if (this.bpmFlashAt > 0) {
@@ -1148,7 +1329,8 @@
         const p = (perfNow - lj.t0) / 500;
         if (p < 1) {
           g.save();
-          g.translate(W / 2, judgeY - 130);
+          // 无轨没有判定线可依附，固定挂在场地下方
+          g.translate(W / 2, this.free ? Math.min(H - 34, this.freeY0 + this.freeH + 26) : judgeY - 130);
           const sc = 1 + 0.15 * Math.max(0, 1 - p * 5);
           g.scale(sc, sc);
           g.globalAlpha = p < 0.7 ? 1 : (1 - p) / 0.3;

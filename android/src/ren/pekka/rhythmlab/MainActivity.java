@@ -331,7 +331,7 @@ public class MainActivity extends Activity {
             case MotionEvent.ACTION_DOWN:
             case MotionEvent.ACTION_POINTER_DOWN: {
                 int i = ev.getActionIndex();
-                send("d", ev.getPointerId(i), ev.getX(i), age);
+                send("d", ev.getPointerId(i), ev.getX(i), ev.getY(i), age);
                 lastSentX.put(ev.getPointerId(i), ev.getX(i));
                 break;
             }
@@ -342,7 +342,7 @@ public class MainActivity extends Activity {
                     float x = ev.getX(i);
                     if (Math.abs(x - lastSentX.get(id)) < eps) continue;
                     lastSentX.put(id, x);
-                    send("m", id, x, age);
+                    send("m", id, x, ev.getY(i), age);
                 }
                 break;
             }
@@ -350,7 +350,7 @@ public class MainActivity extends Activity {
             case MotionEvent.ACTION_POINTER_UP:
             case MotionEvent.ACTION_CANCEL: {
                 int i = ev.getActionIndex();
-                send("u", ev.getPointerId(i), ev.getX(i), age);
+                send("u", ev.getPointerId(i), ev.getX(i), ev.getY(i), age);
                 lastSentX.remove(ev.getPointerId(i));
                 break;
             }
@@ -381,10 +381,14 @@ public class MainActivity extends Activity {
         }
     };
 
-    private void send(String type, int id, float xPx, float age) {
+    /* 一条记录是 "类型,id,x,y,排队毫秒"。无轨模式的判定要 y，
+       所以从 RhythmLabShell/4 起多发一段；页面两种长度都认。 */
+    private void send(String type, int id, float xPx, float yPx, float age) {
         if (batchCount > 0) batch.append(';');
         batch.append(type).append(',').append(id).append(',')
-             .append(Math.round(xPx / density * 10) / 10f).append(',').append(Math.round(age));
+             .append(Math.round(xPx / density * 10) / 10f).append(',')
+             .append(Math.round(yPx / density * 10) / 10f).append(',')
+             .append(Math.round(age));
         batchCount++;
         // 攒太多就立刻发，别让一帧内的爆发拖到下一帧
         if (batchCount >= 32) { web.removeCallbacks(flush); flush.run(); return; }

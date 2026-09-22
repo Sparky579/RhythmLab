@@ -65,3 +65,31 @@ console.log('charts', total, 'warnings', warnTotal, 'fails', fails);
 // 示例：180 BPM 难度 0.5 单键切 分度
 console.log('180/0.5 single div:', G.generate({preset:'stream_single',bpm:180,difficulty:0.5,seed:'x'}).phrases.map(p=>p.div).join(','));
 console.log('240/0.5 single div:', G.generate({preset:'stream_single',bpm:240,difficulty:0.5,seed:'x'}).phrases.map(p=>p.div).join(','));
+
+/* 无轨：按键不许叠、不许出界，且要真的用满二维 */
+{
+  let bad = 0;
+  const seen = [];
+  for (const key of G.PRESET_KEYS.concat(['mixed'])) {
+    for (const size of [4, 6, 8, 10]) {
+      for (const seed of ['a', 'b']) {
+        const c = G.generate({ preset: key, free: true, freeSize: size, bpm: 200, seed, measures: 16 });
+        if (c.warnings.length) { bad++; console.log('FREE WARN', key, size, seed, c.warnings.join(';')); }
+        if (c.notes.some(n => typeof n.nx !== 'number' || typeof n.ny !== 'number')) {
+          bad++; console.log('FREE 缺坐标', key, size, seed);
+        }
+        if (key === 'stream_single' && seed === 'a') {
+          const ys = c.notes.map(n => n.ny);
+          seen.push({ 按键: '1/' + size, 内部列数: c.keys,
+                      不同x: new Set(c.notes.map(n => +n.nx.toFixed(4))).size,
+                      y跨度: (Math.max(...ys) - Math.min(...ys)).toFixed(2) });
+        }
+      }
+    }
+  }
+  console.table(seen);
+  console.log('无轨用例失败', bad);
+  if (bad) fails += bad;
+}
+console.log('总失败', fails);
+process.exit(fails ? 1 : 0);

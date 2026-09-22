@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '46';
+  const BUILD = '47';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -17,6 +17,8 @@
     group: 'trill',
     preset: 'trill_basic',
     keys: 4,
+    free: false,            // 无轨：固定大小的按键落在屏幕任意位置，只能触屏打
+    freeSize: 6,            // 无轨按键直径 = 场地宽的 1/freeSize
     bpm: 160,
     measures: 16,
     seed: 'demo',
@@ -57,6 +59,10 @@
         : (G.PRESET_KEYS.find(k => G.PRESETS[k].group === state.group) || 'trill_basic');
     }
     if (G.KEY_OPTIONS.indexOf(state.keys) < 0) state.keys = 4;
+    state.free = !!state.free;
+    state.freeSize = Math.max(4, Math.min(10, Math.round(+state.freeSize || 6)));
+    // 无轨要求能点到屏幕任意位置，鼠标勉强能试，键盘完全没法打——非触屏设备直接不给选
+    if (state.free && !isTouch()) state.free = false;
   }
   function saveState() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
@@ -66,14 +72,16 @@
   const game = new MG.Game($('game'), audio);
   MG.game = game;   // 供自动化测试驱动真实路径
   // 原生壳（安卓 App）通过它把 MotionEvent 直接喂进来
-  MG.nativeTouch = (type, id, x, age) => game.nativeTouch(type, id, x, age);
-  /* 原生壳攒批下发：一条字符串里是若干 "类型,id,x,age"，分号分隔 */
+  MG.nativeTouch = (type, id, x, age, y) => game.nativeTouch(type, id, x, age, y);
+  /* 原生壳攒批下发：一条字符串里是若干 "类型,id,x,age" 或 "类型,id,x,y,age"，分号分隔。
+     无轨模式需要 y，壳从 RhythmLabShell/4 起改发 5 段；4 段是旧壳，照旧只有 x。 */
   MG.nativeBatch = (s) => {
     if (!s) return;
     const recs = s.split(';');
     for (let i = 0; i < recs.length; i++) {
       const f = recs[i].split(',');
-      if (f.length === 4) game.nativeTouch(f[0], +f[1], +f[2], +f[3]);
+      if (f.length === 5) game.nativeTouch(f[0], +f[1], +f[2], +f[4], +f[3]);
+      else if (f.length === 4) game.nativeTouch(f[0], +f[1], +f[2], +f[3]);
     }
   };
   let chart = null;
@@ -411,12 +419,22 @@
     $('optMixed').classList.toggle('hidden', !mixed);
     if (mixed) renderMixedPool();
 
-    const K = state.keys;
-    const labels = MG.KEYMAP[K].labels.join(' ');
-    $('keysHint').textContent = K === 4
-      ? '4 轨，键盘 D F J K。交互类也可用，两手位置会映射到最近的轨道。'
-      : '7 轨，键盘 S D F 空格 J K L。中间那轨是拇指，会用紫色区分。';
-    $('keyHelp').textContent = `桌面用 ${labels} 击打，或鼠标点击轨道；手机直接点轨道。Esc 暂停。`;
+    $('optFree').classList.toggle('hidden', !state.free);
+    if (state.free) {
+      const cols = G.freeCols(state.freeSize);
+      $('keysHint').textContent = `无轨：没有轨道，固定大小的按键出现在屏幕任意位置，`
+        + `外面那圈环收拢到按键大小时就是判定时刻。只能触屏打。`;
+      $('freeHint').textContent = `按键直径 = 场地宽的 1/${state.freeSize}，`
+        + `横向可落 ${cols} 个位置、纵向连续。按键越小位置越多、越考验瞄准。`;
+      $('keyHelp').textContent = '点到哪个按键就打哪个，键盘打不了。Esc 暂停。';
+    } else {
+      const K = state.keys;
+      const labels = MG.KEYMAP[K].labels.join(' ');
+      $('keysHint').textContent = K === 4
+        ? '4 轨，键盘 D F J K。交互类也可用，两手位置会映射到最近的轨道。'
+        : '7 轨，键盘 S D F 空格 J K L。中间那轨是拇指，会用紫色区分。';
+      $('keyHelp').textContent = `桌面用 ${labels} 击打，或鼠标点击轨道；手机直接点轨道。Esc 暂停。`;
+    }
 
     const ch = state.challenge;
     $('optChallenge').classList.toggle('hidden', !ch);
@@ -524,6 +542,7 @@
   function genOpts() {
     return {
       preset: state.preset, keys: state.keys, bpm: state.bpm, seed: state.seed,
+      free: state.free, freeSize: state.freeSize,
       measures: state.measures, restRatio: state.restRatio,
       challenge: state.challenge, bpmEnd: state.bpmEnd,
       rampMeasures: state.rampMeasures, rampStep: state.rampStep,
@@ -584,6 +603,7 @@
     const g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = '#080a12'; g.fillRect(0, 0, cw, chh);
+    if (ch.free) return drawPreviewFree(g, ch, cw, chh);
 
     const K = ch.keys, span = ch.beat * 16, pad = 10;
     const yOf = (t) => chh - pad - (t / span) * (chh - pad * 2);
@@ -624,6 +644,44 @@
       g.fillStyle = (K === 7 && n.col === 3) ? MG.JUDGE.THUMB_COLOR : MG.JUDGE.HAND_COLORS[n.hand];
       g.fillRect(n.col * lw + 2, yOf(n.t) - h / 2, lw - 4, h);
     }
+  }
+
+  /* 无轨没有「下落」可画，改成俯视的落点图：按时间先后从暗到亮，
+     连线表示同一只手的移动路线，一眼看出手要在屏幕上跑多远。 */
+  function drawPreviewFree(g, ch, cw, chh) {
+    const pad = 8;
+    const aspect = ch.aspect || 0.5;
+    let fw = cw - pad * 2, fh = fw * aspect;
+    if (fh > chh - pad * 2) { fh = chh - pad * 2; fw = fh / aspect; }
+    const x0 = (cw - fw) / 2, y0 = (chh - fh) / 2;
+    const R = fw * ch.noteD / 2;
+    g.fillStyle = 'rgba(255,255,255,0.04)';
+    g.fillRect(x0, y0, fw, fh);
+    const span = ch.beat * 16;
+    const shown = ch.notes.filter(n => n.t < span);
+    const px = (n) => x0 + n.nx * fw, py = (n) => y0 + n.ny * fh;
+    // 手的路线
+    for (const hand of [0, 1]) {
+      const seq = shown.filter(n => n.hand === hand);
+      if (seq.length < 2) continue;
+      g.strokeStyle = hand === 0 ? 'rgba(79,200,255,0.22)' : 'rgba(255,111,174,0.22)';
+      g.lineWidth = 1;
+      g.beginPath(); g.moveTo(px(seq[0]), py(seq[0]));
+      for (let i = 1; i < seq.length; i++) g.lineTo(px(seq[i]), py(seq[i]));
+      g.stroke();
+    }
+    for (let i = 0; i < shown.length; i++) {
+      const n = shown[i];
+      g.globalAlpha = 0.25 + 0.75 * (i / Math.max(1, shown.length - 1));
+      g.fillStyle = MG.JUDGE.HAND_COLORS[n.hand];
+      g.beginPath(); g.arc(px(n), py(n), Math.max(2, R), 0, Math.PI * 2); g.fill();
+    }
+    g.globalAlpha = 1;
+    g.fillStyle = 'rgba(255,255,255,0.5)';
+    g.font = '11px system-ui, sans-serif';
+    // 场地是 2:1 的一条，上下都空着；说明文字放到框外面去，别压在按键上
+    g.textBaseline = y0 > 18 ? 'bottom' : 'top';
+    g.fillText('前 4 小节的落点（越亮越晚，连线是手的路线）', x0, y0 > 18 ? y0 - 5 : y0 + 4);
   }
 
   /* ---------- 开始 / 结果 ---------- */
@@ -997,10 +1055,21 @@
     $('seed').addEventListener('input', (e) => { state.seed = e.target.value || 'demo'; refresh(); });
     $('btnSeed').addEventListener('click', () => { state.seed = randomSeed(); $('seed').value = state.seed; refresh(); });
 
-    bindSeg('keys', v => { state.keys = +v; syncSubopts(); refresh(); });
+    bindSeg('keys', v => {
+      state.free = v === 'free';
+      if (!state.free) state.keys = +v;
+      syncSubopts(); refresh();
+    });
+    bindRange('freeSize', 'freeSizeOut', 'freeSize', v => `1/${v} 屏宽`, null,
+      () => { if ($('optFree') && state.free) syncSubopts(); });
+    // 非触屏设备上把「无轨」置灰：它靠的就是点屏幕任意位置
+    if (!isTouch()) {
+      const kf = $('keyFree');
+      if (kf) { kf.disabled = true; kf.title = '无轨只能触屏打'; }
+    }
     bindSeg('axisHand', v => { state.axisHand = v; refresh(); });
     bindSeg('axisStyle', v => { state.axisStyle = v; refresh(); });
-    setSeg('keys', state.keys);
+    setSeg('keys', state.free ? 'free' : state.keys);
     setSeg('axisHand', state.axisHand);
     setSeg('axisStyle', state.axisStyle);
 
