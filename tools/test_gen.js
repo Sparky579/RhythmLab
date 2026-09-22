@@ -5,7 +5,7 @@ const rows = [];
 for (const key of G.PRESET_KEYS.concat(['mixed'])) {
   let nNotes=0, nCharts=0, warns=0, empties=0, divs=new Set(), cross=0, jackFast=0;
   for (const bpm of BPMS) for (const d of DIFFS) for (const s of SEEDS) {
-    const opts={preset:key,bpm,difficulty:d,seed:s,measures:16, axisStyle: key==='trill_axis'?['tri','x','8'][SEEDS.indexOf(s)]:'tri', axisHand:'alt'};
+    const opts={preset:key,bpm,difficulty:d,seed:s,measures:16, keys: d===1?7:4, axisStyle: key==='trill_axis'?['tri','x','8'][SEEDS.indexOf(s)]:'tri', axisHand:'alt'};
     const c1=G.generate(opts), c2=G.generate(opts);
     const j1=JSON.stringify(c1.notes), j2=JSON.stringify(c2.notes);
     if (j1!==j2) { fails++; console.log('NOT REPRODUCIBLE', key,bpm,d,s); }
@@ -31,6 +31,18 @@ for (const key of G.PRESET_KEYS.concat(['mixed'])) {
       for (const n of c1.notes) { if (n.hand===0) L=n.x; else R=n.x; if (L!==null&&R!==null&&R-L<0.12-1e-9) { cross++; break; } }
       // 交替
       for (let i=1;i<c1.notes.length;i++) if (c1.notes[i].hand===c1.notes[i-1].hand) { fails++; console.log('NOT ALTERNATING',key,bpm,d,s,i); break; }
+    }
+    // 押海：每一行都必须是同一个押数，共列只能是偶尔的换组手段
+    if (G.PRESETS[key] && G.PRESETS[key].sea) {
+      const byT=new Map(); for (const n of c1.notes){ if(!byT.has(n.t)) byT.set(n.t,[]); byT.get(n.t).push(n.col); }
+      const ts=[...byT.keys()].sort((a,b)=>a-b);
+      const want=+Object.keys(G.PRESETS[key].chord)[0];
+      let shared=0;
+      for (let i=0;i<ts.length;i++){
+        if (byT.get(ts[i]).length!==want) { fails++; console.log('SEA 押数不齐',key,bpm,s,ts[i],byT.get(ts[i])); break; }
+        if (i>0) { const a=byT.get(ts[i-1]); if (byT.get(ts[i]).some(c=>a.includes(c))) shared++; }
+      }
+      if (shared/ts.length > 0.35) { fails++; console.log('SEA 共列过多',key,opts.keys||4,bpm,s,(shared/ts.length*100).toFixed(0)+'%'); }
     }
     // 4K 硬约束
     if (G.PRESETS[key] && G.PRESETS[key].kind==='4k') {

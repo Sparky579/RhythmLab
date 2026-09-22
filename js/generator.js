@@ -61,6 +61,11 @@
       chord: { 1: 100 }, chordOnBeat: { 2: 100 }, perBeat: 2, maxRun: 1,
       desc: '每拍 2 个双押，其余单键',
     },
+    js_sea: {
+      name: '双押海', group: 'stream', kind: 'row', rule: 'stream',
+      chord: { 2: 100 }, maxRun: 2, sea: true,
+      desc: '整段每一行都是双押，偶尔共一列换组',
+    },
     hs_light: {
       name: '三切 LHS', group: 'stream', kind: 'row', rule: 'stream',
       chord: { 1: 100 }, chordOnBeat: { 2: 30, 3: 70 }, perBeat: 1, maxRun: 1,
@@ -239,7 +244,9 @@
       if (popcount(m) !== k) continue;
       if (rule === 'jack' && preset.anchor && !(m & (1 << pp.anchorCol))) continue;
       if (prev.length) {
-        if (rule === 'stream' && (m & last)) continue;
+        // 押海最多共 1 列。硬性「一列都不许共」在 4K 上会把双押锁死：
+        // 每个双押的后继唯一（就是它的补集），整首只剩两组和弦来回倒。
+        if (rule === 'stream' && (preset.sea ? popcount(m & last) > 1 : (m & last))) continue;
         if (rule === 'jack' && !relaxShare && !(m & last)) continue;
       }
       const maxRun = rule === 'rest' ? 2 : pp.maxRun;
@@ -254,6 +261,9 @@
     return out;
   }
 
+  /* 休息段走的是自己那套规则，押海的放宽不适用（休息段本来就只有单键） */
+  const isRestRule = (rule) => rule === 'rest';
+
   function rowPenalty(ctx, rule, preset, pp, m) {
     const K = ctx.K, prev = ctx.prevRows, n = prev.length;
     const last = n ? prev[n - 1] : 0;
@@ -265,6 +275,13 @@
         p += 0.7 * Math.abs(popcount(m & last) - 1);
       }
       if (n >= 2 && m === prev[n - 2] && m !== last) p += 0.6;
+    } else if (preset.sea && !isRestRule(rule)) {
+      /* 押海：整段每一行都是同样的押数，相邻行又不许共列。4K 下满足这两条的
+         组合只有三对互补和弦，来回倒是它的本来面目 —— 要是照常罚 ABAB，
+         打分会把所有双押都顶出阈值，最后降押成单键，压根成不了「海」。
+         所以这里不罚交替，改成罚共列：共列是换组的唯一出路，得留着但不能常用。 */
+      if (n >= 1) p += 2.4 * popcount(m & last);
+      if (n >= 2 && m === prev[n - 2] && m !== last && n >= 3 && last === prev[n - 3]) p += 0.35;
     } else {
       // 切 / 乱 / 休息：避免 ABA、ABAB
       if (n >= 2 && m === prev[n - 2] && m !== last) {
