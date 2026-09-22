@@ -379,6 +379,11 @@
   }
 
   /* ---------- 交互：双手模型 → 最近列 ---------- */
+  /* 位移幅度 = 0 必须是「全程一点位移都没有」，所以除了把各处的位移量线性收到 0，
+     还要冻结乐句参数：否则每 2 小节重抽一次两手位置，本身就是一次大位移。
+     冻结的是第一个乐句抽到的那组参数，后面所有乐句原样复用。 */
+  const TRILL_FREEZE_KEYS = ['L', 'R', 'step', 'dir', 'off', 'axisLeft', 'style',
+    'period', 'axis', 'mLo', 'mHi', 'startSide', 'g0', 'center', 'allowCross'];
   function samplePhraseTrill(ctx, preset, pp, opts) {
     const rng = ctx.rng, K = ctx.K, amt = opts.shiftAmount;
     const unit = 1 / K;
@@ -386,6 +391,10 @@
     const span = 1 - 2 * E;               // 可用范围
     pp.allowCross = false;
     pp.collapse = false;
+    if (amt <= 0 && ctx.trillFreeze) {
+      for (const k of TRILL_FREEZE_KEYS) if (k in ctx.trillFreeze) pp[k] = ctx.trillFreeze[k];
+      return;
+    }
 
     // 起手必须一左一右跨过中线：L ≤ 0.5 ≤ R
     const pickPair = (gap) => {
@@ -398,7 +407,9 @@
 
     switch (preset.mode) {
       case 'basic': {
-        const g = rng.float(1.05 * unit, Math.min(span, 3.2 * unit));
+        // 普通交互不平移，位移幅度在这里就是「两手能拉开多远」：0 时紧挨着原地互搓
+        const gMax = Math.max(1.05 * unit, Math.min(span, lerp(1.05 * unit, 3.2 * unit, amt)));
+        const g = rng.float(1.05 * unit, gMax);
         const pair = pickPair(g);
         pp.L = pair[0]; pp.R = pair[1];
         break;
@@ -407,7 +418,8 @@
         const g = rng.float(1.05 * unit, Math.min(span, 2.6 * unit));
         const pair = pickPair(g);
         pp.L = pair[0]; pp.R = pair[1];
-        pp.step = lerp(0.6 * unit, 2.2 * unit, amt);
+        // 0 时步长为 0：两手钉在起手的位置上，整段就是原地交互
+        pp.step = lerp(0, 2.4 * unit, amt);
         pp.dir = rng.sign();
         pp.off = 0;
         break;
@@ -424,26 +436,41 @@
           pp.axis = clamp(a, E, 1 - E);
           const lo = axisLeft ? pp.axis + 1.05 * unit : E;
           const hi = axisLeft ? 1 - E : pp.axis - 1.05 * unit;
-          const range = Math.max(0.5 * unit, hi - lo);
-          const ampl = clamp(lerp(1.2 * unit, (K - 1) * unit, amt), 0.5 * unit, range);
+          const range = Math.max(0, hi - lo);
+          // 0 时振幅为 0：反手也钉死不动，整段两手都在原地
+          const ampl = clamp(lerp(0, (K - 1) * unit, amt), 0, range);
           const mid = clamp(rng.float(lo + ampl / 2, hi - ampl / 2), Math.min(lo, hi), Math.max(lo, hi));
           pp.mLo = clamp(mid - ampl / 2, E, 1 - E);
           pp.mHi = clamp(mid + ampl / 2, E, 1 - E);
         } else {
+          // X / 8 形是跨手往返，摆幅同样按位移幅度收缩，0 时缩成一个点
           pp.allowCross = true;
           pp.axis = rng.float(0.5 - 0.5 * unit, 0.5 + 0.5 * unit);
-          pp.mLo = E; pp.mHi = 1 - E;
+          const half = 0.5 * (1 - 2 * E) * amt;
+          pp.mLo = clamp(0.5 - half, E, 1 - E);
+          pp.mHi = clamp(0.5 + half, E, 1 - E);
           pp.startSide = rng.sign();
         }
         break;
       }
       case 'converge': {
-        const gMax = Math.min(span, (K - 1) * unit);
-        pp.g0 = rng.float(Math.max(2 * unit, gMax * 0.6), gMax);
-        pp.center = pickPair(pp.g0)[0] + pp.g0 / 2;
+        // 收拢的「位移」就是起始间距：0 时起始间距也是 0，整段退化成原地纵连
+        const gMax = Math.max(1.05 * unit, Math.min(span, (K - 1) * unit));
+        const lo = lerp(0, Math.max(2 * unit, gMax * 0.6), amt);
+        const hi = lerp(0, gMax, amt);
+        pp.g0 = rng.float(lo, Math.max(lo, hi));
+        // 中心取这一对的中点。原先写成「左手位置 + g0/2」，而 pickPair 会把过小的
+        // 间距撑到 1.05 列宽，两者不是同一个 g，间距小的时候中心会整体偏左半列。
+        const pr = pickPair(pp.g0);
+        pp.center = (pr[0] + pr[1]) / 2;
         pp.allowCross = true;
         break;
       }
+    }
+    if (amt <= 0) {
+      const f = {};
+      for (const k of TRILL_FREEZE_KEYS) if (k in pp) f[k] = pp[k];
+      ctx.trillFreeze = f;
     }
   }
 
@@ -553,12 +580,13 @@
   }
 
   /* 纵连换轨：不连着两小节用同一轨，否则整段变成一条不断的纵连。
-     shiftAmount 控制跳多远：0 只挪到相邻轨，1 可以横跨整个键位。 */
+     shiftAmount 控制跳多远：0 干脆不换轨（整首钉在一条上），1 可以横跨整个键位。 */
   function pickJackCol(ctx, opts) {
     const K = ctx.K, rng = ctx.rng;
     const prev = ctx.jackCol;
     if (prev === undefined) return rng.int(0, K - 1);
-    const span = Math.max(1, Math.round(lerp(1, K - 1, clamp(+opts.shiftAmount || 0, 0, 1))));
+    const span = Math.round(lerp(0, K - 1, clamp(+opts.shiftAmount || 0, 0, 1)));
+    if (span <= 0) return prev;
     const cand = [];
     for (let c = 0; c < K; c++) {
       if (c === prev) continue;

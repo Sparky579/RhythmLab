@@ -45,7 +45,8 @@
           <div class="field">
             <label>位移幅度 <output id="shiftAmountOut">50%</output></label>
             <input type="range" id="shiftAmount" min="0" max="1" step="0.05" value="0.5" />
-            <p class="hint">0% 约等于原地交互，100% 是能跨到整块键区的大位移。</p>
+            <p class="hint">0% 就是全程零位移：两手钉死在起手的位置，乐句之间也不重抽。100% 能跨到整块键区。</p>
+            <p class="hint" id="shiftHint"></p>
           </div>
           <div class="field" id="axisOpts">
             <label>轴手（反手）</label>

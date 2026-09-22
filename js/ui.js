@@ -343,8 +343,12 @@
   function syncSubopts() {
     const mixed = isMixed();
     const p = mixed ? null : G.PRESETS[state.preset];
-    const trillShown = (p && p.kind === 'trill') || (mixed && state.mixedPool.some(k => G.PRESETS[k].kind === 'trill'));
+    // 纵连（kind 'jackline'）也吃位移幅度——它决定换轨跳多远，以前滑条被藏起来，
+    // 看着就像「调了没用」。凡是真的会用到这个值的预设都要把滑条露出来。
+    const usesShift = (k) => G.PRESETS[k] && (G.PRESETS[k].kind === 'trill' || G.PRESETS[k].kind === 'jackline');
+    const trillShown = (!mixed && usesShift(state.preset)) || (mixed && state.mixedPool.some(usesShift));
     $('optTrill').classList.toggle('hidden', !trillShown);
+    $('shiftHint').textContent = shiftHintText();
     $('axisOpts').classList.toggle('hidden', !(mixed ? state.mixedPool.indexOf('trill_axis') >= 0 : state.preset === 'trill_axis'));
     $('optMixed').classList.toggle('hidden', !mixed);
     if (mixed) renderMixedPool();
@@ -362,6 +366,22 @@
     setMeasuresDisplay(ch);
     const bpmLabel = $('bpmOut').parentElement;
     if (bpmLabel) bpmLabel.firstChild.nodeValue = ch ? '起始 BPM ' : 'BPM ';
+  }
+
+  /* 位移幅度对每个预设的含义不同，直接把当前这个说清楚，省得来回试 */
+  function shiftHintText() {
+    const pct = Math.round(state.shiftAmount * 100) + '%';
+    const zero = state.shiftAmount <= 0;
+    const what = {
+      trill_basic: zero ? '两手紧挨着原地互搓' : '两手最多能拉开多远',
+      trill_shift4: zero ? '两手钉死不动，等于原地交互' : '每组平移多远',
+      trill_shift3: zero ? '两手钉死不动，等于原地交互' : '每组平移多远',
+      trill_axis: zero ? '反手也钉死不动，两手都在原地' : '反手往返的摆幅',
+      trill_converge: zero ? '起始间距就是 0，整段是原地纵连' : '收拢的起始间距',
+      trill_jack: zero ? '整首钉在同一条轨上，永不换轨' : '换轨最多跳几条',
+    }[isMixed() ? 'trill_basic' : state.preset];
+    return `当前 ${pct}：${what || '两手的活动范围'}。`
+      + (zero ? '0% 就是全程零位移，乐句之间也不再重抽位置。' : '');
   }
 
   /* 挑战模式下小节数是算出来的，用一个临时选项把真实值显示出来 */
@@ -809,12 +829,12 @@
       renderPresets(); syncSubopts(); refresh();
     }));
 
-    const bindRange = (id, outId, key, fmt, target) => {
+    const bindRange = (id, outId, key, fmt, target, after) => {
       const el = $(id), out = $(outId);
       if (!el || !out) return;            // 控件缺失（多半是缓存错配）时跳过，别把整页搞挂
       const obj = () => (target === 'game' ? state.game : state);
       el.value = obj()[key];
-      const upd = () => { out.textContent = fmt(+el.value); };
+      const upd = () => { out.textContent = fmt(+el.value); if (after) after(); };
       upd();
       el.addEventListener('input', () => {
         obj()[key] = +el.value;
@@ -839,7 +859,8 @@
         else refresh();
       });
     };
-    bindRange('shiftAmount', 'shiftAmountOut', 'shiftAmount', v => Math.round(v * 100) + '%');
+    bindRange('shiftAmount', 'shiftAmountOut', 'shiftAmount', v => Math.round(v * 100) + '%',
+      null, () => { $('shiftHint').textContent = shiftHintText(); });
     bindRange('fancyRatio', 'fancyRatioOut', 'fancyRatio', v => Math.round(v * 100) + '%');
     bindRange('restRatio', 'restOut', 'restRatio', v => Math.round(v * 100) + '%');
     bindRange('rampMeasures', 'rampMeasuresOut', 'rampMeasures', v => v + ' 小节');
