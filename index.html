@@ -267,6 +267,15 @@
   <!-- 游戏页 -->
   <div id="play" class="screen hidden">
     <canvas id="game"></canvas>
+    <!-- 安卓 Chrome 只有全屏时才允许锁方向，iOS 压根不支持。锁不上就挡在这儿，
+         让人自己转过来，而不是在竖屏下打一局别扭的。 -->
+    <div id="rotateGate" class="rotate-gate hidden">
+      <div>
+        <div class="rotate-icon">⟳</div>
+        <b>请把手机横过来</b>
+        <p>无轨与多轨都按横屏排布，竖屏下轨道会窄到点不准。</p>
+      </div>
+    </div>
     <button id="btnPause" class="pause-btn" title="暂停">❚❚</button>
     <div id="pauseOverlay" class="overlay hidden">
       <div class="card">

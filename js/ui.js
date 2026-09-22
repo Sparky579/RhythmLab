@@ -81,6 +81,34 @@
 
   const isMixed = () => state.preset === 'mixed';
   let scrollSave = 0;
+
+  /* ---------- 横屏 ---------- */
+  /* 安卓 Chrome 的 screen.orientation.lock 只在全屏时才允许调用；iOS Safari 完全不支持。
+     所以锁定只能当作「尽力而为」，真正的兜底是 #rotateGate 那块竖屏挡板。
+     原生壳里整个 Activity 已经锁死横屏，这两条都不会触发。 */
+  const isTouch = () => typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches;
+  function lockLandscape() {
+    const so = screen && screen.orientation;
+    if (!so || !so.lock) return;
+    try { const r = so.lock('landscape'); if (r && r.catch) r.catch(() => {}); } catch (e) { /* 不支持就算了 */ }
+  }
+  function unlockOrientation() {
+    const so = screen && screen.orientation;
+    if (!so || !so.unlock) return;
+    try { so.unlock(); } catch (e) { /* ignore */ }
+  }
+  /* 竖屏挡板：只在触屏设备、游戏页、且确实是竖屏时挡。桌面窗口再高也不挡。 */
+  function syncRotateGate() {
+    const gate = $('rotateGate');
+    if (!gate) return;
+    const playing = !$('play').classList.contains('hidden');
+    const portrait = window.innerHeight > window.innerWidth;
+    const need = playing && portrait && isTouch();
+    gate.classList.toggle('hidden', !need);
+    // 挡板期间把游戏停住，免得音符白白掉过去算成 miss
+    if (need && (game.state === 'playing' || game.state === 'countin')) game.pause();
+  }
+
   function exitFullscreen() {
     if (!document.fullscreenElement && !document.webkitFullscreenElement) return;
     const fn = document.exitFullscreen || document.webkitExitFullscreen;
@@ -624,7 +652,16 @@
     if (state.game.autoFullscreen && !document.fullscreenElement) {
       const el = document.documentElement;
       const fn = el.requestFullscreen || el.webkitRequestFullscreen;
-      if (fn) { try { const r = fn.call(el); if (r && r.catch) r.catch(() => {}); } catch (e) { /* 忽略 */ } }
+      // 方向锁要在全屏生效之后才允许调用，所以挂在它的 resolve 上；
+      // 同步的旧实现（webkit）拿不到 Promise，就直接试一次
+      if (fn) {
+        try {
+          const r = fn.call(el);
+          if (r && r.then) r.then(lockLandscape, () => {}); else lockLandscape();
+        } catch (e) { /* 忽略 */ }
+      }
+    } else {
+      lockLandscape();
     }
     $('resultOverlay').classList.add('hidden');
     $('pauseOverlay').classList.add('hidden');
@@ -632,9 +669,15 @@
     game.load(chart);
     game.resize();
     game.start();
+    // 锁定是异步的（要等全屏先生效），所以隔一下再看还是不是竖屏；
+    // 真转过来了，resize / orientationchange 会把挡板收掉
+    syncRotateGate();
+    setTimeout(syncRotateGate, 400);
   }
   function backToSetup() {
     game.stop();
+    unlockOrientation();
+    $('rotateGate').classList.add('hidden');
     exitFullscreen();
     lockScroll(false);
     $('play').classList.add('hidden');
@@ -643,6 +686,8 @@
   }
   function showResult(res) {
     exitFullscreen();          // 一局打完就退出全屏，方便看结果和改设置
+    unlockOrientation();
+    $('rotateGate').classList.add('hidden');
     rollSeed();                // 每局一换，「再来一次」拿到的是新谱不是背下来的旧谱
     $('resultOverlay').classList.remove('hidden');
     syncOverlayScroll();
@@ -1052,7 +1097,9 @@
     };
     window.addEventListener('resize', () => {
       if (!$('setup').classList.contains('hidden') && chart) drawPreview(chart);
+      syncRotateGate();
     });
+    window.addEventListener('orientationchange', () => setTimeout(syncRotateGate, 250));
   }
 
   /* 换一个种子并重算谱面。设置页的种子框与预览同步更新，

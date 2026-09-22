@@ -168,6 +168,19 @@ BPM 从起点逐段爬到目标，用来找自己的上限。
 重新打包：`cd android && ./build.sh`（不依赖 gradle，用 aapt + javac + dx + apksigner，
 需要 `/usr/lib/android-sdk` 与 JDK）。
 
+## 横屏
+
+手机一律横屏打：
+
+- **安卓 App** 在 `AndroidManifest.xml` 里写死 `sensorLandscape`，整个 App（含设置页）
+  只有横屏，两个方向都认。
+- **网页端**在开始训练时调 `screen.orientation.lock('landscape')`。这个 API 在安卓 Chrome
+  上**只有全屏时才允许调用**，所以它挂在 `requestFullscreen()` 的 resolve 上；iOS Safari
+  完全不支持。
+- 锁不上就用**竖屏挡板**兜底：触屏设备在游戏页里一旦是竖屏就挡一层「请把手机横过来」，
+  同时把这一局暂停，免得音符白白掉过去算成 miss。转过来挡板自动收掉。
+- PWA 的 `manifest.webmanifest` 也声明 `"orientation": "landscape"`，装到桌面后同样只横屏。
+
 ## PWA
 
 站点带 `manifest.webmanifest` 与 `sw.js`，可以「添加到主屏幕」。装好后以 fullscreen 模式启动，
