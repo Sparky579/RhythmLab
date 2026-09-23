@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="css/style.css?v=53" />
+  <link rel="stylesheet" href="css/style.css?v=54" />
 </head>
 <body>
   <!-- 设置页 -->
@@ -117,6 +117,7 @@
           <label>背景音</label>
           <select id="bgm"></select>
           <p class="hint" id="bgmHint"></p>
+          <label class="check"><input type="checkbox" id="bgmAdaptive" /> 自适应调速（音乐只按 2 的倍数变速，尽量贴近原速）</label>
           <div class="row" style="margin-top:8px">
             <button type="button" id="btnUploadBgm" class="ghost">＋ 上传音乐</button>
             <button type="button" id="btnManageBgm" class="ghost hidden">管理我的音乐</button>
@@ -182,6 +183,7 @@
             <input type="number" id="lenBeats" min="4" max="1024" step="1" aria-label="拍数" />
             <span>拍</span>
           </div>
+          <button type="button" id="lenSong" class="ghost small hidden">＝ 当前歌曲的长度</button>
           <p class="hint" id="lenHint"></p>
         </div>
         <div class="field">
@@ -255,22 +257,37 @@
     <div class="card">
       <h2>确认节拍</h2>
       <p class="muted" id="bgmcName"></p>
+      <div class="field">
+        <label>速度曲线</label>
+        <canvas id="bgmcCurve" class="bgmc-curve" height="110"></canvas>
+        <p class="hint" id="bgmcSegHint"></p>
+      </div>
+      <div class="field">
+        <label>截取范围 <output id="bgmcRangeOut">0:00 – 0:00</output></label>
+        <div class="range-pair">
+          <span>起</span><input type="range" id="bgmcFrom" min="0" max="60" step="0.1" value="0" aria-label="截取起点" />
+        </div>
+        <div class="range-pair">
+          <span>止</span><input type="range" id="bgmcTo" min="0" max="60" step="0.1" value="60" aria-label="截取终点" />
+        </div>
+        <button type="button" id="bgmcRedetect" class="ghost small">在这个范围里重新测速</button>
+      </div>
       <p class="hint">节拍器会叠在音乐上。听着对不上就调下面两项，调到咔哒声正好落在鼓点上。</p>
       <div class="field">
         <label>BPM <output id="bgmcBpmOut">120</output></label>
         <div class="row stepper">
           <button type="button" class="ghost" data-d="-10">−10</button>
           <button type="button" class="ghost" data-d="-1">−1</button>
-          <input type="number" id="bgmcBpmNum" min="40" max="240" step="1" value="120" inputmode="numeric" aria-label="BPM" />
+          <input type="number" id="bgmcBpmNum" min="40" max="240" step="0.01" value="120" inputmode="decimal" aria-label="BPM" />
           <button type="button" class="ghost" data-d="1">+1</button>
           <button type="button" class="ghost" data-d="10">+10</button>
         </div>
-        <input type="range" id="bgmcBpm" min="40" max="240" step="1" value="120" />
+        <input type="range" id="bgmcBpm" min="40" max="240" step="0.01" value="120" />
       </div>
       <div class="field">
         <label>起拍点 <output id="bgmcOffOut">0 ms</output></label>
         <input type="range" id="bgmcOff" min="0" max="2000" step="5" value="0" />
-        <p class="hint">第一拍落在音乐的第几毫秒。</p>
+        <p class="hint">截取起点之后第一拍在第几毫秒（可调一整小节，用来对准重拍）。</p>
       </div>
       <div class="field">
         <label>试听位置 <output id="bgmcPosOut">0:00</output></label>
@@ -327,13 +344,13 @@
     </div>
   </div>
 
-  <script src="js/rng.js?v=53"></script>
-  <script src="js/generator.js?v=53"></script>
-  <script src="js/bgm.js?v=53"></script>
-  <script src="js/bgmuser.js?v=53"></script>
-  <script src="js/audio.js?v=53"></script>
-  <script src="js/game.js?v=53"></script>
-  <script src="js/ui.js?v=53"></script>
+  <script src="js/rng.js?v=54"></script>
+  <script src="js/generator.js?v=54"></script>
+  <script src="js/bgm.js?v=54"></script>
+  <script src="js/bgmuser.js?v=54"></script>
+  <script src="js/audio.js?v=54"></script>
+  <script src="js/game.js?v=54"></script>
+  <script src="js/ui.js?v=54"></script>
   <script>
   /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
   if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
@@ -346,7 +363,7 @@
   /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
      不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
   (function () {
-    var WANT = '53';
+    var WANT = '54';
     var MG = window.MG || {};
     var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
     if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }

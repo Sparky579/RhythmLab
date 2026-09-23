@@ -61,11 +61,6 @@
       chord: { 1: 100 }, chordOnBeat: { 2: 100 }, perBeat: 2, maxRun: 1,
       desc: '每拍 2 个双押，其余单键',
     },
-    js_sea: {
-      name: '双押海', group: 'stream', kind: 'row', rule: 'stream',
-      chord: { 2: 100 }, maxRun: 2, sea: true,
-      desc: '整段每一行都是双押，偶尔共一列换组',
-    },
     hs_light: {
       name: '三切 LHS', group: 'stream', kind: 'row', rule: 'stream',
       chord: { 1: 100 }, chordOnBeat: { 2: 30, 3: 70 }, perBeat: 1, maxRun: 1,
@@ -110,9 +105,16 @@
       gap: 0.06, chord: { 1: 72, 2: 25, 3: 3 }, maxRun: 2,
       desc: '同上，双押多一些，偶尔三押',
     },
+    /* 双押海放在「乱 / 散打」这一栏，但它是花样，不是乱，照样能被散打插入 */
+    js_sea: {
+      name: '双押海', group: 'chaos', kind: 'row', rule: 'stream',
+      chord: { 2: 100 }, maxRun: 2, sea: true,
+      desc: '整段每一行都是双押，偶尔共一列换组',
+    },
   };
   const PRESET_KEYS = Object.keys(PRESETS);
-  const FANCY_KEYS = PRESET_KEYS.filter(k => PRESETS[k].group !== 'chaos');
+  // 散打能插入的花样：除了「乱」本身（散打的底子就是乱）之外的全部
+  const FANCY_KEYS = PRESET_KEYS.filter(k => PRESETS[k].rule !== 'random');
 
   /* ---------- 工具 ---------- */
   const clamp = (v, a, b) => (v < a ? a : v > b ? b : v);
@@ -186,7 +188,7 @@
       opts.measures = Math.max(2, Math.ceil(opts.beats / 4));
     }
     if (opts.preset === 'mixed') {
-      let pool = Array.isArray(opts.mixedPool) ? opts.mixedPool.filter(k => PRESETS[k] && PRESETS[k].group !== 'chaos') : null;
+      let pool = Array.isArray(opts.mixedPool) ? opts.mixedPool.filter(k => FANCY_KEYS.indexOf(k) >= 0) : null;
       opts.mixedPool = (pool && pool.length) ? pool : FANCY_KEYS.slice();
     } else if (!PRESETS[opts.preset]) {
       opts.preset = 'stream_single';

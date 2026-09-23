@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '53';
+  const BUILD = '54';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -53,6 +53,8 @@
         if (!state.mixedPool.length) state.mixedPool = G.FANCY_KEYS.slice();
       }
     } catch (e) { /* ignore */ }
+    // 双押海从「切」挪到了「乱 / 散打」，老存档跟着搬过去
+    if (state.preset === 'js_sea') state.group = 'chaos';
     const GROUP_IDS = ['trill', 'stream', 'jack', 'chaos'];
     if (GROUP_IDS.indexOf(state.group) < 0) state.group = 'trill';
     const okPreset = state.group === 'chaos'
@@ -305,29 +307,120 @@
           name: file.name.replace(/\.[^.]+$/, '').slice(0, 40) || '未命名',
           blob: new Blob([ab], { type: file.type || 'audio/mpeg' }),
           duration: info.duration,
-          bpm: Math.round(info.bpm),
-          startSec: info.startSec,
           buffer: info.buffer,
+          env: info.env, envLow: info.envLow, fps: info.fps,
+          segments: info.segments, curve: info.curve,
+          bpm: round2(info.bpm),
+          from: info.rangeStart, to: info.rangeEnd,
+          anchor: info.startSec,          // 某一拍的绝对位置；网格以它为原点，调范围时拍点不动
         };
         openConfirm();
       })
       .catch((e) => { hint.textContent = '读不了这个文件：' + e.message; });
   }
 
+  const round2 = (v) => Math.round(v * 100) / 100;
+  const fmtPos = (sec) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
+  const barSec = () => 240 / pending.bpm;
+  /* 起拍点 = 截取起点之后、与网格对齐的第一个小节起点（相对起点的秒数） */
+  const offSec = () => {
+    const bar = barSec(), v = (((pending.anchor - pending.from) % bar) + bar) % bar;
+    return v > bar - 0.03 ? 0 : v;     // 拍点比起点早几毫秒时别绕到小节末尾去
+  };
+
+  /* 把 pending 同步到面板上的所有控件 */
+  function syncConfirm() {
+    const p = pending;
+    const bpmEl = $('bgmcBpm');
+    bpmEl.value = p.bpm;
+    if (document.activeElement !== $('bgmcBpmNum')) $('bgmcBpmNum').value = p.bpm;
+    $('bgmcBpmOut').textContent = p.bpm;
+    // 起拍点能调一整小节：测速只定得出拍的相位，定不出哪一拍是重拍
+    const offEl = $('bgmcOff');
+    offEl.max = Math.round(barSec() * 1000);
+    offEl.value = Math.round(offSec() * 1000);
+    $('bgmcOffOut').textContent = offEl.value + ' ms';
+    const fromEl = $('bgmcFrom'), toEl = $('bgmcTo');
+    fromEl.max = toEl.max = Math.floor(p.duration * 10) / 10;
+    fromEl.value = p.from; toEl.value = p.to;
+    $('bgmcRangeOut').textContent = `${fmtPos(p.from)} – ${fmtPos(p.to)}（${Math.round(p.to - p.from)} 秒）`;
+    const posEl = $('bgmcPos');
+    // 试听位置存在 pending 里：滑块的值会被浏览器按 min/max 夹住，改范围时会被拖着跑
+    posEl.min = p.from; posEl.max = Math.max(p.from + 0.5, p.to - 0.5);
+    if (!(p.pos >= p.from && p.pos <= p.to - 0.5)) p.pos = p.from;
+    posEl.value = p.pos;
+    if (!preview) $('bgmcPosOut').textContent = fmtPos(p.pos);
+    drawCurve();
+  }
+
+  /* 速度曲线：横轴整首时间，纵轴 BPM。检测出的各段用色块分开，
+     截取范围外面压暗；点某一段就选中它 */
+  function drawCurve(playAt) {
+    const cv = $('bgmcCurve'), p = pending;
+    if (!cv || !p) return;
+    const dpr = window.devicePixelRatio || 1;
+    const W = Math.max(10, cv.clientWidth), H = cv.clientHeight || 110;
+    if (cv.width !== Math.round(W * dpr)) { cv.width = Math.round(W * dpr); cv.height = Math.round(H * dpr); }
+    const g = cv.getContext('2d');
+    g.setTransform(dpr, 0, 0, dpr, 0, 0);
+    g.clearRect(0, 0, W, H);
+    const segs = p.segments || [], curve = p.curve || [];
+    const vals = segs.map((sg) => sg.bpm).concat(curve.map((c) => c.bpm), [p.bpm]);
+    let lo = Math.min.apply(null, vals), hi = Math.max.apply(null, vals);
+    const padV = Math.max(6, (hi - lo) * 0.25); lo -= padV; hi += padV;
+    const x = (t) => (t / p.duration) * W;
+    const y = (b) => H - 16 - ((b - lo) / (hi - lo)) * (H - 30);
+    const palette = ['rgba(122,162,255,0.18)', 'rgba(192,132,252,0.18)'];
+    segs.forEach((sg, i) => {
+      g.fillStyle = palette[i % 2];
+      g.fillRect(x(sg.start), 0, x(sg.end) - x(sg.start), H);
+    });
+    // 曲线
+    g.strokeStyle = 'rgba(232,236,255,0.35)'; g.lineWidth = 1;
+    g.beginPath();
+    curve.forEach((c, i) => { const px = x(c.t), py = y(c.bpm); if (i) g.lineTo(px, py); else g.moveTo(px, py); });
+    g.stroke();
+    // 每段的精测值
+    g.font = '11px system-ui, sans-serif'; g.textAlign = 'center';
+    segs.forEach((sg) => {
+      g.strokeStyle = '#7aa2ff'; g.lineWidth = 2;
+      g.beginPath(); g.moveTo(x(sg.start) + 2, y(sg.bpm)); g.lineTo(x(sg.end) - 2, y(sg.bpm)); g.stroke();
+      if (x(sg.end) - x(sg.start) > 38) {
+        g.fillStyle = 'rgba(232,236,255,0.85)';
+        g.fillText(sg.bpm.toFixed(1), (x(sg.start) + x(sg.end)) / 2, Math.max(12, y(sg.bpm) - 6));
+      }
+    });
+    // 截取范围外压暗，边界画线
+    g.fillStyle = 'rgba(5,6,12,0.6)';
+    g.fillRect(0, 0, x(p.from), H);
+    g.fillRect(x(p.to), 0, W - x(p.to), H);
+    g.strokeStyle = '#fff'; g.lineWidth = 1.5;
+    for (const t of [p.from, p.to]) { g.beginPath(); g.moveTo(x(t), 0); g.lineTo(x(t), H); g.stroke(); }
+    if (playAt !== undefined) {
+      g.strokeStyle = '#ffd166'; g.beginPath(); g.moveTo(x(playAt), 0); g.lineTo(x(playAt), H); g.stroke();
+    }
+    // 时间刻度：首尾
+    g.fillStyle = 'rgba(232,236,255,0.5)'; g.textAlign = 'left';
+    g.fillText('0:00', 4, H - 4);
+    g.textAlign = 'right'; g.fillText(fmtPos(p.duration), W - 4, H - 4);
+  }
+
+  function segHintText() {
+    const segs = pending.segments || [];
+    if (segs.length <= 1) return '全曲速度稳定，默认用整首。想只用其中一段就拖下面的截取范围。';
+    const best = segs.reduce((a, b) => (b.end - b.start > a.end - a.start ? b : a));
+    return `检测到变速（${segs.length} 段）：`
+      + segs.map((sg) => `${fmtPos(sg.start)}–${fmtPos(sg.end)} ${sg.bpm.toFixed(1)}`).join('，')
+      + `。已自动选最长的一段（${fmtPos(best.start)}–${fmtPos(best.end)}），点曲线上的其它段可以换，也可以自己拖范围。`;
+  }
+
   function openConfirm() {
     $('bgmcName').textContent = `${pending.name} · ${Math.round(pending.duration)} 秒`;
-    const bpmEl = $('bgmcBpm'), offEl = $('bgmcOff');
-    bpmEl.value = pending.bpm; $('bgmcBpmNum').value = pending.bpm; $('bgmcBpmOut').textContent = pending.bpm;
-    const posEl = $('bgmcPos');
-    posEl.max = Math.max(1, Math.floor(pending.duration * 2) / 2);
-    posEl.value = 0; $('bgmcPosOut').textContent = '0:00';
-    // 一整小节：测速只定得出「拍」的相位，定不出哪一拍是重拍。
-    // 范围只给 2 拍的话，重拍差了一拍半就调不回来了（试听的咔哒声每 4 拍加重，听得出来）。
-    offEl.max = Math.round(60000 / Math.max(40, pending.bpm) * 4);
-    offEl.value = Math.round(pending.startSec * 1000);
-    $('bgmcOffOut').textContent = offEl.value + ' ms';
+    $('bgmcSegHint').textContent = segHintText();
+    pending.pos = pending.from;
     $('bgmConfirm').classList.remove('hidden');
     document.body.classList.add('modal-open');   // 背景别跟着滚
+    syncConfirm();                               // 面板显示出来之后才量得到画布宽度
   }
 
   function closeConfirm() {
@@ -344,10 +437,9 @@
     clearInterval(preview.timer);
     preview = null;
     if ($('bgmcPos')) $('bgmcPosOut').textContent = fmtPos(+$('bgmcPos').value);
+    if (pending) drawCurve();
     $('bgmcPlay').textContent = '▶ 试听';
   }
-
-  const fmtPos = (sec) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
 
   /* 试听：音乐照原速放，节拍器按当前 BPM 与起拍点叠上去。
      从「试听位置」开始放；节拍网格始终以起拍点为原点，所以放到 1:00 也是对齐的 */
@@ -356,16 +448,17 @@
     if (!ctx || !pending) return;
     stopPreview();
     if (ctx.state !== 'running' && ctx.resume) ctx.resume().catch(() => {});
-    const bpm = +$('bgmcBpm').value, off = +$('bgmcOff').value / 1000;
-    const pos = +$('bgmcPos').value;
-    const beat = 60 / bpm, SECS = 15;
+    const bpm = pending.bpm, off = pending.from + offSec();   // 截取范围里的第一拍（绝对秒）
+    const pos = pending.pos || pending.from;
+    const end = pending.to;
+    const beat = 60 / bpm, SECS = Math.max(1, Math.min(15, end - Math.max(pos, pending.from)));
     const t0 = ctx.currentTime + 0.2;
     const src = ctx.createBufferSource();
     src.buffer = pending.buffer;
     const g = ctx.createGain(); g.gain.value = 0.8;
     src.connect(g); g.connect(audio.master || ctx.destination);
     // 从开头试听时从第一拍前半秒起播，省得等前奏
-    const from = pos > 0 ? Math.min(pos, Math.max(0, pending.duration - 1)) : Math.max(0, off - 0.5);
+    const from = pos > pending.from + 0.01 ? Math.min(pos, Math.max(0, end - 1)) : Math.max(pending.from, off - 0.5);
     src.start(t0, from);
     const clicks = [];
     for (let k = Math.ceil((from - off) / beat); ; k++) {
@@ -386,6 +479,7 @@
     const timer = setInterval(() => {
       const now = from + Math.max(0, ctx.currentTime - t0);
       $('bgmcPosOut').textContent = fmtPos(now) + ' ▶';
+      drawCurve(now);
     }, 200);
     preview = { src, clicks, timer };
     $('bgmcPlay').textContent = '■ 停止';
@@ -398,8 +492,10 @@
     const rec = {
       id: pending.id, name: pending.name, blob: pending.blob,
       duration: pending.duration,
-      bpm: Math.round(+$('bgmcBpm').value),
-      startSec: +$('bgmcOff').value / 1000,
+      // BPM 留两位小数：3 分钟的歌 137.88 存成 138，结尾会差出 150ms
+      bpm: round2(pending.bpm),
+      startSec: Math.round((pending.from + offSec()) * 1000) / 1000,   // 截取范围里第一个小节的起点
+      endSec: pending.to,
       addedAt: Date.now(),
     };
     MG.UserBgm.save(rec)
@@ -521,6 +617,16 @@
       + (zero ? '0% 就是全程零位移，乐句之间也不再重抽位置。' : '');
   }
 
+  /* 选中的是自己上传的曲子时，整首（截取范围）刚好放完需要多少拍。
+     音乐按 BPM / 原速 变速，所以拍数与谱面 BPM 无关，只和曲子本身有关；
+     开了自适应调速时一拍音乐对应 ratio 拍谱面 */
+  function songBeats() {
+    const g = MG.BGM_BY_ID[state.game.bgm];
+    if (!g || !g.custom || !g.baseBpm) return 0;
+    const ratio = state.game.bgmAdaptive ? MG.bgmTempoRatio(state.bpm, g.baseBpm) : 1;
+    return clampBeats(Math.floor(g.loopBars * 4 * ratio));
+  }
+
   /* 长度两栏互相跟随：正在编辑的那栏不去覆盖，免得打字时被改掉。
      挑战模式的长度由爬升区间推出来，两栏只显示、不能改 */
   function syncLen() {
@@ -542,6 +648,12 @@
     const focus = document.activeElement;
     if (focus !== tEl) tEl.value = !ch && state.lenMode === 'time' ? fmtTime(state.lenSec) : (isNaN(sec) ? '' : fmtTime(sec));
     if (focus !== bEl) bEl.value = beats;
+    const songBtn = $('lenSong');
+    if (songBtn) {
+      const nb = songBeats();
+      songBtn.classList.toggle('hidden', ch || !nb);
+      if (nb) songBtn.textContent = `＝ 当前歌曲的长度（${nb} 拍）`;
+    }
     if (!hint) return;
     if (ch) {
       hint.textContent = '挑战模式的长度由爬升区间决定。';
@@ -567,21 +679,32 @@
   }
   /* BGM 提示：告诉用户这条 groove 的原速和几个合适的 BPM */
   function syncBgmHint() {
+    syncLen();                      // 「＝ 当前歌曲的长度」按钮跟着选中的曲子走
     const el = $('bgmHint');
     if (!el) return;
     const g = MG.BGM_BY_ID[state.game.bgm];
     if (!g) { el.textContent = ''; return; }
     if (!g.baseBpm) { el.textContent = g.desc + '。'; return; }
     const list = MG.bgmSuggestBpms(g.baseBpm).join(' / ');
-    const ratio = MG.bgmTempoRatio(state.bpm, g.baseBpm);
+    const ratio = state.game.bgmAdaptive ? MG.bgmTempoRatio(state.bpm, g.baseBpm) : 1;
     const rate = state.bpm / (g.baseBpm * ratio);
     const fit = Math.abs(rate - 1) < 0.005;
-    let html = `${g.desc}。原速 ${g.baseBpm}，整倍速的 BPM：${list}。`;
-    // BPM 随便设，音乐按倍速跟着走；这里把实际倍速说清楚
-    html += fit
-      ? ' 当前正好是整倍速。'
-      : ` 当前 ${state.bpm} BPM，音乐按 <b>${rate.toFixed(2)} 倍速</b>跟着走`
-        + ` <button type="button" id="bgmAlign" class="link">对齐到整倍速</button>`;
+    let html;
+    if (state.game.bgmAdaptive) {
+      html = `${g.desc}。原速 ${g.baseBpm}，整倍速的 BPM：${list}。`;
+      // 自适应：音乐只按 2 的幂变速，BPM 不在整倍速上时才有额外的变速
+      html += fit
+        ? ' 当前正好是整倍速。'
+        : ` 当前 ${state.bpm} BPM，音乐按 <b>${rate.toFixed(2)} 倍速</b>跟着走`
+          + ` <button type="button" id="bgmAlign" class="link">对齐到整倍速</button>`;
+    } else {
+      // 默认：谱面多快音乐就多快
+      html = `${g.desc}。原速 ${g.baseBpm}，`;
+      html += fit
+        ? '当前按原速播放。'
+        : `当前 ${state.bpm} BPM，音乐按 <b>${rate.toFixed(2)} 倍速</b>播放`
+          + ` <button type="button" id="bgmToBase" class="link">设为原速 ${g.baseBpm}</button>`;
+    }
     if (state.challenge) html += ' 挑战模式下会跟着一起持续加速（音高随之升高）。';
     if (g.credit) {
       html += `<br><a href="${g.creditUrl}" target="_blank" rel="noopener" style="color:var(--accent)">${g.credit}</a>`;
@@ -589,6 +712,8 @@
     el.innerHTML = html;
     const btn = $('bgmAlign');
     if (btn) btn.addEventListener('click', () => { snapBpmToBgm(); });
+    const toBase = $('bgmToBase');
+    if (toBase) toBase.addEventListener('click', () => { setBpm(Math.round(g.baseBpm)); });
   }
 
   /* 判定与下落速度的说明 */
@@ -1002,6 +1127,11 @@
       state.lenSec = Math.min(3600, v); state.lenMode = 'time'; syncLen(); refresh();
     });
     $('lenTime').addEventListener('change', () => syncLen());
+    $('lenSong').addEventListener('click', () => {
+      const nb = songBeats();
+      if (!nb) return;
+      state.beats = nb; state.lenMode = 'beats'; syncLen(); refresh();
+    });
     $('lenBeats').addEventListener('input', (e) => {
       if (!(+e.target.value >= 1)) return;
       state.beats = clampBeats(e.target.value); state.lenMode = 'beats'; syncLen(); refresh();
@@ -1061,13 +1191,14 @@
       });
     }
 
-    for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoFullscreen', 'minimalFx']) {
+    for (const id of ['bgmAdaptive', 'metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoFullscreen', 'minimalFx']) {
       if (!$(id)) continue;
       $(id).checked = !!state.game[id];
       $(id).addEventListener('change', (e) => {
         state.game[id] = e.target.checked;
         Object.assign(game.settings, state.game);
         saveState();
+        if (id === 'bgmAdaptive') syncBgmHint();
       });
     }
     $('mixAll').addEventListener('click', () => { state.mixedPool = G.FANCY_KEYS.slice(); renderMixedPool(); refresh(); });
@@ -1105,32 +1236,62 @@
     $('bgmcSave').addEventListener('click', saveConfirm);
     $('bgmcPlay').addEventListener('click', () => (preview ? stopPreview() : startPreview()));
     const bpmC = $('bgmcBpm'), bpmN = $('bgmcBpmNum'), offC = $('bgmcOff'), posC = $('bgmcPos');
-    const syncC = () => {
-      $('bgmcBpmOut').textContent = bpmC.value;
-      if (document.activeElement !== bpmN) bpmN.value = bpmC.value;
-      $('bgmcOffOut').textContent = offC.value + ' ms';
-    };
     // 正在试听时改参数：停一下马上按新参数重放，边听边调（连点按钮只重放最后一次）
     let replayT = 0;
     const retune = () => {
-      syncC();
+      if (!pending) return;
+      syncConfirm();
       if (!preview) return;
       stopPreview();
       clearTimeout(replayT);
       replayT = setTimeout(startPreview, 250);
     };
     const setBpmC = (v) => {
-      bpmC.value = Math.max(40, Math.min(240, Math.round(v)));
+      if (!pending || !(v > 0)) return;
+      pending.bpm = round2(Math.max(40, Math.min(240, v)));
       retune();
     };
-    bpmC.addEventListener('input', retune);
-    offC.addEventListener('input', retune);
+    bpmC.addEventListener('input', () => setBpmC(+bpmC.value));
     bpmN.addEventListener('input', () => { if (+bpmN.value >= 40 && +bpmN.value <= 240) setBpmC(+bpmN.value); });
-    bpmN.addEventListener('change', () => { setBpmC(+bpmN.value || +bpmC.value); bpmN.value = bpmC.value; });
+    bpmN.addEventListener('change', () => { setBpmC(+bpmN.value || pending.bpm); bpmN.value = pending.bpm; });
     document.querySelectorAll('#bgmConfirm .stepper button').forEach((btn) => {
-      btn.addEventListener('click', () => setBpmC(+bpmC.value + +btn.dataset.d));
+      btn.addEventListener('click', () => setBpmC(pending.bpm + +btn.dataset.d));
     });
+    // 起拍点：挪的是网格原点
+    offC.addEventListener('input', () => { if (pending) { pending.anchor = pending.from + +offC.value / 1000; retune(); } });
+    // 截取范围：至少留 4 秒；动起点时网格不动，起拍点自动换算
+    const MIN_RANGE = 4;
+    $('bgmcFrom').addEventListener('input', (e) => {
+      if (!pending) return;
+      pending.from = Math.max(0, Math.min(+e.target.value, pending.to - MIN_RANGE));
+      retune();
+    });
+    $('bgmcTo').addEventListener('input', (e) => {
+      if (!pending) return;
+      pending.to = Math.min(pending.duration, Math.max(+e.target.value, pending.from + MIN_RANGE));
+      retune();
+    });
+    $('bgmcRedetect').addEventListener('click', () => {
+      if (!pending) return;
+      const r = MG.UserBgm.analyzeRange(pending.env, pending.envLow, pending.fps, pending.from, pending.to);
+      pending.bpm = round2(r.bpm); pending.anchor = r.firstBeat;
+      retune();
+    });
+    // 点曲线上的某一段：整段选中，并用这段的测速结果
+    $('bgmcCurve').addEventListener('click', (e) => {
+      if (!pending || !pending.segments) return;
+      const rect = e.currentTarget.getBoundingClientRect();
+      const t = (e.clientX - rect.left) / rect.width * pending.duration;
+      const sg = pending.segments.find((x) => t >= x.start && t <= x.end);
+      if (!sg) return;
+      pending.from = sg.start; pending.to = sg.end;
+      pending.bpm = round2(sg.bpm); pending.anchor = sg.firstBeat;
+      pending.pos = sg.start;
+      retune();
+    });
+    window.addEventListener('resize', () => { if (pending) drawCurve(); });
     posC.addEventListener('input', () => {
+      if (pending) pending.pos = +posC.value;
       $('bgmcPosOut').textContent = fmtPos(+posC.value);
       if (preview) { stopPreview(); clearTimeout(replayT); replayT = setTimeout(startPreview, 250); }
     });

@@ -255,3 +255,10 @@ a.ghost {
    用 absolute 的话页面滚到下面时弹窗在最上方，看起来像把设置挤到了它下面 */
 body > .overlay { position: fixed; }
 body.modal-open { overflow: hidden; }
+
+/* 确认节拍：速度曲线与截取范围 */
+.bgmc-curve { width: 100%; height: 110px; display: block; border-radius: 10px; background: rgba(0,0,0,0.3); cursor: pointer; touch-action: manipulation; }
+.range-pair { display: flex; align-items: center; gap: 8px; }
+.range-pair span { font-size: 12px; color: var(--muted); width: 1.2em; }
+.range-pair input { flex: 1; }
+button.small { padding: 6px 10px; font-size: 13px; }

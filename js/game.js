@@ -35,6 +35,9 @@
     bgm: 'metro',        // 'metro' 节拍器 | 'none' 无声 | 录音/合成 id
     bgmVolume: 1.0,      // BGM 相对音量
     metroOverlay: false, // 放 BGM 时是否再叠一层节拍器
+    // 自适应调速：音乐速度贴到原速的 2 的幂倍（128 的曲子打 256 仍按原速放、一拍当两拍）。
+    // 默认关：谱面多快音乐就多快，128 的曲子打 256 就是两倍速
+    bgmAdaptive: false,
     volume: 0.8,
     showErrorBar: true,
     laneSlackPx: 12,     // 轨道判定余量：落点越过轨道边线这么多像素内仍算这一轨
@@ -428,9 +431,9 @@
         if (mb[i] > hiBpm) hiBpm = mb[i];
         if (mb[i] < loBpm) loBpm = mb[i];
       }
-      let ratio = MG.bgmTempoRatio(startBpm, this.bgm.baseBpm);
+      let ratio = this.settings.bgmAdaptive ? MG.bgmTempoRatio(startBpm, this.bgm.baseBpm) : 1;
       const base = this.bgm.baseBpm;
-      if (base) {
+      if (base && this.settings.bgmAdaptive) {
         if (hiBpm / (base * ratio) > 2 && ratio < 8) ratio *= 2;
         else if (loBpm / (base * ratio) < 0.5 && ratio > 0.25) ratio /= 2;
       }
