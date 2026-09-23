@@ -184,11 +184,8 @@
       if (!ctx) return Promise.reject(new Error('no audio context'));
       this.files[url] = fetch(url)
         .then((r) => { if (!r.ok) throw new Error('HTTP ' + r.status); return r.arrayBuffer(); })
-        .then((buf) => new Promise((res, rej) => {
-          const ok = (b) => res(b), bad = (e) => rej(e || new Error('decode failed'));
-          const p2 = ctx.decodeAudioData(buf, ok, bad);
-          if (p2 && p2.then) p2.then(ok, bad);
-        }))
+        // 与上传同一套解码（带超时 + 离线上下文兜底），否则上传能过、开局却解不出来
+        .then((buf) => MG.UserBgm.decode(buf, ctx))
         .then((b) => {
           // 解码后的 PCM 一条就有 4~5MB，手机上留几条就会造成明显内存压力，
           // 进而引发大停顿。这里只保留当前正在用的这一条。

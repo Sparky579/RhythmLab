@@ -418,11 +418,23 @@
       this.bgmBuf = null;
       this.bgmSteps = 0;
       if (!this.bgm) return;
-      // 倍率按全曲最高 BPM 定一次：挑战模式宁可开头慢一半，也不让结尾快一倍
-      let refBpm = this.chart.bpm;
+      // 倍率按起始 BPM 定：128 的曲子从 128 提到 200，开头就该是原速，
+      // 按最高 BPM 定的话 200 会贴到 256，开头变成半速。
+      // 只有结尾要快过两倍（或降速慢过一半）时才换一档，别让结尾失真到离谱
       const mb = this.chart.measureBpm;
-      if (mb) for (let i = 0; i < mb.length; i++) if (mb[i] > refBpm) refBpm = mb[i];
-      this.bgmRatio = MG.bgmTempoRatio(refBpm, this.bgm.baseBpm);
+      const startBpm = mb && mb.length ? mb[0] : this.chart.bpm;
+      let hiBpm = startBpm, loBpm = startBpm;
+      if (mb) for (let i = 0; i < mb.length; i++) {
+        if (mb[i] > hiBpm) hiBpm = mb[i];
+        if (mb[i] < loBpm) loBpm = mb[i];
+      }
+      let ratio = MG.bgmTempoRatio(startBpm, this.bgm.baseBpm);
+      const base = this.bgm.baseBpm;
+      if (base) {
+        if (hiBpm / (base * ratio) > 2 && ratio < 8) ratio *= 2;
+        else if (loBpm / (base * ratio) < 0.5 && ratio > 0.25) ratio /= 2;
+      }
+      this.bgmRatio = ratio;
       if (this.bgm.kind === 'file') {
         this.bgmBuf = this.audio.decoded && this.audio.decoded[this.bgm.url] || null;
         if (!this.bgmBuf) { this.bgm = null; return; }

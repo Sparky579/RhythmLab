@@ -68,9 +68,10 @@
   }
 
   /* 单声道 + 降采样到 ~11025Hz，后面所有分析都在这上面做 */
-  function toMono(buf, sr) {
+  function toMono(buf, sr, maxSec) {
     const ratio = buf.sampleRate / sr;
-    const n = Math.floor(buf.length / ratio);
+    let n = Math.floor(buf.length / ratio);
+    if (maxSec) n = Math.min(n, Math.floor(sr * maxSec));
     const out = new Float32Array(n);
     const chs = [];
     for (let c = 0; c < buf.numberOfChannels; c++) chs.push(buf.getChannelData(c));
@@ -195,25 +196,95 @@
     return { bpm, startSec, confidence: bestScore };
   }
 
-  /* 上传入口：解码 -> 测速。返回的 bpm/startSec 只是建议值 */
-  function analyze(arrayBuf, ctx) {
+  /* 给一个 Promise 套上超时：手机上 decodeAudioData 有时既不 resolve 也不 reject，
+     界面就永远停在「正在解码」。超时就当失败，交给下一条路 */
+  function withTimeout(p, ms, msg) {
     return new Promise((res, rej) => {
-      const ok = (b) => res(b), bad = (e) => rej(e || new Error('解码失败，换个格式试试'));
-      const p = ctx.decodeAudioData(arrayBuf.slice(0), ok, bad);
-      if (p && p.then) p.then(ok, bad);
-    }).then((buf) => {
-      const SR = 11025;
-      // 只分析前 60 秒，够测速了，手机上也不至于卡太久
-      const x = toMono(buf, SR).subarray(0, SR * 60);
-      const { env, fps } = onsetEnvelope(x, SR);
-      const t = detectTempo(env, fps, 60, 200);
-      return {
-        buffer: buf,
-        duration: buf.duration,
-        bpm: Math.round(t.bpm * 10) / 10,
-        startSec: Math.round(t.startSec * 1000) / 1000,
-        confidence: t.confidence,
+      const t = setTimeout(() => rej(new Error(msg)), ms);
+      p.then((v) => { clearTimeout(t); res(v); }, (e) => { clearTimeout(t); rej(e); });
+    });
+  }
+
+  function decodeWith(ctx, arrayBuf) {
+    return new Promise((res, rej) => {
+      let done = false;
+      const ok = (b) => { if (!done) { done = true; res(b); } };
+      const bad = (e) => { if (!done) { done = true; rej(e || new Error('解码失败，换个格式试试')); } };
+      try {
+        // 老 WebKit 只认回调，新浏览器两种都给；各自复制一份，解码会把传入的 buffer 转移走
+        const p = ctx.decodeAudioData(arrayBuf.slice(0), ok, bad);
+        if (p && p.then) p.then(ok, bad);
+      } catch (e) { bad(e); }
+    });
+  }
+
+  /* 解码：实时上下文先上，5 秒还没出结果就再用离线上下文并行解一份，谁先好用谁。
+     实时上下文在没被用户手势解锁时是 suspended，有的手机浏览器/WebView 上
+     decodeAudioData 会就此挂住；OfflineAudioContext 不受自动播放策略管，不会这样。
+     等实时那条彻底超时再换，用户得干等半分钟。 */
+  function decode(arrayBuf, ctx) {
+    const mb = arrayBuf.byteLength / 1048576;
+    const limit = 15000 + mb * 1500;           // 30MB 给到 60 秒，慢手机也够
+    const OAC = window.OfflineAudioContext || window.webkitOfflineAudioContext;
+    const errs = [];
+    return new Promise((res, rej) => {
+      let pending = 0, settled = false;
+      const run = (make) => {
+        pending++;
+        let p;
+        try { p = decodeWith(make(), arrayBuf); } catch (e) { p = Promise.reject(e); }
+        withTimeout(p, limit, '解码超时').then((b) => {
+          if (!settled) { settled = true; clearTimeout(t); res(b); }
+        }, (e) => {
+          errs.push(e);
+          // 实时那条早早失败了（格式不认），不必再等 5 秒
+          if (--pending === 0 && !settled) {
+            if (!triedOffline && OAC) { clearTimeout(t); startOffline(); return; }
+            settled = true;
+            rej(new Error(errs.some((x) => /超时/.test(x.message))
+              ? '解码超时，这个文件本机解不动，换成 mp3 再试'
+              : '解码失败，换个格式（mp3 / m4a / ogg）试试'));
+          }
+        });
       };
+      let triedOffline = false;
+      const startOffline = () => {
+        if (triedOffline || settled || !OAC) return;
+        triedOffline = true;
+        run(() => new OAC(2, 1, ctx.sampleRate || 44100));
+      };
+      const t = setTimeout(startOffline, 5000);
+      if (ctx.state !== 'running' && ctx.resume) {
+        try { const r = ctx.resume(); if (r && r.catch) r.catch(() => {}); } catch (e) { /* ignore */ }
+      }
+      run(() => ctx);
+    });
+  }
+
+  /* 让出一帧，好让「正在…」的提示先画出来，再开始占主线程的计算 */
+  const nextFrame = () => new Promise((r) => setTimeout(r, 30));
+
+  /* 上传入口：解码 -> 测速。返回的 bpm/startSec 只是建议值。
+     onStage(text) 用来报告进行到哪一步，卡住时至少知道卡在哪 */
+  function analyze(arrayBuf, ctx, onStage) {
+    const stage = (t) => { if (onStage) onStage(t); };
+    stage('正在解码…');
+    return decode(arrayBuf, ctx).then((buf) => {
+      stage('正在测速…');
+      return nextFrame().then(() => {
+        const SR = 11025;
+        // 只分析前 60 秒，够测速了，手机上也不至于卡太久
+        const x = toMono(buf, SR, 60);
+        const { env, fps } = onsetEnvelope(x, SR);
+        const t = detectTempo(env, fps, 60, 200);
+        return {
+          buffer: buf,
+          duration: buf.duration,
+          bpm: Math.round(t.bpm * 10) / 10,
+          startSec: Math.round(t.startSec * 1000) / 1000,
+          confidence: t.confidence,
+        };
+      });
     });
   }
 
@@ -239,6 +310,7 @@
   MG.UserBgm = {
     MAX_BYTES,
     analyze,
+    decode,
     list: () => listAll().then((rs) => rs.sort((a, b) => a.addedAt - b.addedAt)),
     save: (rec) => putOne(rec),
     remove: (id) => {

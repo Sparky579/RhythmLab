@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '49';
+  const BUILD = '50';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -259,11 +259,17 @@
         + `${MG.UserBgm.MAX_BYTES / 1048576}MB。截一段再传。`;
       return;
     }
-    hint.textContent = '正在解码并测速…';
+    hint.textContent = '正在读取文件…';
     const ctx = audio.ensure();
     if (!ctx) { hint.textContent = '音频未就绪，先点一下页面再试。'; return; }
-    readArrayBuffer(file)
-      .then((ab) => MG.UserBgm.analyze(ab, ctx).then((info) => ({ ab, info })))
+    // 从网盘/云端选的文件要先下载到本机，读取可能一直不返回
+    const readLimit = 20000 + file.size / 1048576 * 2000;
+    Promise.race([
+      readArrayBuffer(file),
+      new Promise((_, rej) => setTimeout(() => rej(new Error('读取文件超时，先把它存到手机本地再选')), readLimit)),
+    ])
+      .then((ab) => MG.UserBgm.analyze(ab, ctx, (t) => { hint.textContent = t; })
+        .then((info) => ({ ab, info })))
       .then(({ ab, info }) => {
         hint.textContent = '';
         pending = {
@@ -713,7 +719,8 @@
     if (bg && bg.kind === 'file') {
       await Promise.race([
         audio.loadFile(bg.url).catch(() => {}),
-        new Promise((r) => setTimeout(r, 8000)),
+        // 实时解码卡住时要等 5 秒才换离线解码，8 秒不够兜住
+        new Promise((r) => setTimeout(r, 20000)),
       ]);
     }
     Object.assign(game.settings, state.game);
@@ -1011,6 +1018,8 @@
       const why = uploadUnsupportedReason();
       if (why) { $('bgmUploadHint').textContent = why; return; }
       $('bgmUploadHint').textContent = '';
+      // 借这次点击解锁音频：没解锁的 AudioContext 在部分手机上解码会一直挂住
+      audio.unlock().catch(() => {});
       $('bgmFile').click();
     });
     $('bgmFile').addEventListener('change', (e) => {
