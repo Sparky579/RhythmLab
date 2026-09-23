@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '51';
+  const BUILD = '52';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -317,7 +317,10 @@
   function openConfirm() {
     $('bgmcName').textContent = `${pending.name} · ${Math.round(pending.duration)} 秒`;
     const bpmEl = $('bgmcBpm'), offEl = $('bgmcOff');
-    bpmEl.value = pending.bpm; $('bgmcBpmOut').textContent = pending.bpm;
+    bpmEl.value = pending.bpm; $('bgmcBpmNum').value = pending.bpm; $('bgmcBpmOut').textContent = pending.bpm;
+    const posEl = $('bgmcPos');
+    posEl.max = Math.max(1, Math.floor(pending.duration * 2) / 2);
+    posEl.value = 0; $('bgmcPosOut').textContent = '0:00';
     // 一整小节：测速只定得出「拍」的相位，定不出哪一拍是重拍。
     // 范围只给 2 拍的话，重拍差了一拍半就调不回来了（试听的咔哒声每 4 拍加重，听得出来）。
     offEl.max = Math.round(60000 / Math.max(40, pending.bpm) * 4);
@@ -336,31 +339,39 @@
     if (!preview) return;
     try { preview.src.stop(); } catch (e) { /* ignore */ }
     for (const o of preview.clicks) { try { o.stop(); } catch (e) { /* ignore */ } }
+    clearInterval(preview.timer);
     preview = null;
+    if ($('bgmcPos')) $('bgmcPosOut').textContent = fmtPos(+$('bgmcPos').value);
     $('bgmcPlay').textContent = '▶ 试听';
   }
 
-  /* 试听：音乐照原速放，节拍器按当前 BPM 与起拍点叠上去 */
+  const fmtPos = (sec) => Math.floor(sec / 60) + ':' + String(Math.floor(sec % 60)).padStart(2, '0');
+
+  /* 试听：音乐照原速放，节拍器按当前 BPM 与起拍点叠上去。
+     从「试听位置」开始放；节拍网格始终以起拍点为原点，所以放到 1:00 也是对齐的 */
   function startPreview() {
     const ctx = audio.ensure();
     if (!ctx || !pending) return;
     stopPreview();
+    if (ctx.state !== 'running' && ctx.resume) ctx.resume().catch(() => {});
     const bpm = +$('bgmcBpm').value, off = +$('bgmcOff').value / 1000;
-    const beat = 60 / bpm, SECS = 12;
+    const pos = +$('bgmcPos').value;
+    const beat = 60 / bpm, SECS = 15;
     const t0 = ctx.currentTime + 0.2;
     const src = ctx.createBufferSource();
     src.buffer = pending.buffer;
     const g = ctx.createGain(); g.gain.value = 0.8;
     src.connect(g); g.connect(audio.master || ctx.destination);
-    // 从第一拍前半秒起播，省得等前奏
-    const from = Math.max(0, off - 0.5);
+    // 从开头试听时从第一拍前半秒起播，省得等前奏
+    const from = pos > 0 ? Math.min(pos, Math.max(0, pending.duration - 1)) : Math.max(0, off - 0.5);
     src.start(t0, from);
     const clicks = [];
-    for (let k = 0; ; k++) {
-      const at = t0 + (off - from) + k * beat;
+    for (let k = Math.ceil((from - off) / beat); ; k++) {
+      const at = t0 + (off + k * beat - from);
       if (at > t0 + SECS) break;
+      if (at < t0) continue;
       const o = ctx.createOscillator(), cg = ctx.createGain();
-      o.frequency.value = k % 4 === 0 ? 1600 : 1100;
+      o.frequency.value = ((k % 4) + 4) % 4 === 0 ? 1600 : 1100;
       cg.gain.setValueAtTime(0.0001, at);
       cg.gain.exponentialRampToValueAtTime(0.5, at + 0.002);
       cg.gain.exponentialRampToValueAtTime(0.0001, at + 0.05);
@@ -369,7 +380,12 @@
       clicks.push(o);
     }
     src.stop(t0 + SECS);
-    preview = { src, clicks };
+    // 播放时把当前位置显示出来（拖动滑块期间不去抢它）
+    const timer = setInterval(() => {
+      const now = from + Math.max(0, ctx.currentTime - t0);
+      $('bgmcPosOut').textContent = fmtPos(now) + ' ▶';
+    }, 200);
+    preview = { src, clicks, timer };
     $('bgmcPlay').textContent = '■ 停止';
     src.onended = () => { if (preview && preview.src === src) stopPreview(); };
   }
@@ -1086,19 +1102,36 @@
     $('bgmcCancel').addEventListener('click', closeConfirm);
     $('bgmcSave').addEventListener('click', saveConfirm);
     $('bgmcPlay').addEventListener('click', () => (preview ? stopPreview() : startPreview()));
-    const bpmC = $('bgmcBpm'), offC = $('bgmcOff');
+    const bpmC = $('bgmcBpm'), bpmN = $('bgmcBpmNum'), offC = $('bgmcOff'), posC = $('bgmcPos');
     const syncC = () => {
-      $('bgmcBpmOut').textContent = (+bpmC.value).toFixed(1).replace(/\.0$/, '');
+      $('bgmcBpmOut').textContent = bpmC.value;
+      if (document.activeElement !== bpmN) bpmN.value = bpmC.value;
       $('bgmcOffOut').textContent = offC.value + ' ms';
     };
-    bpmC.addEventListener('input', () => { syncC(); stopPreview(); });
-    offC.addEventListener('input', () => { syncC(); stopPreview(); });
-    const scaleBpm = (k) => {
-      const v = Math.max(40, Math.min(240, +bpmC.value * k));
-      bpmC.value = v; syncC(); stopPreview();
+    // 正在试听时改参数：停一下马上按新参数重放，边听边调（连点按钮只重放最后一次）
+    let replayT = 0;
+    const retune = () => {
+      syncC();
+      if (!preview) return;
+      stopPreview();
+      clearTimeout(replayT);
+      replayT = setTimeout(startPreview, 250);
     };
-    $('bgmcHalf').addEventListener('click', () => scaleBpm(0.5));
-    $('bgmcDouble').addEventListener('click', () => scaleBpm(2));
+    const setBpmC = (v) => {
+      bpmC.value = Math.max(40, Math.min(240, Math.round(v)));
+      retune();
+    };
+    bpmC.addEventListener('input', retune);
+    offC.addEventListener('input', retune);
+    bpmN.addEventListener('input', () => { if (+bpmN.value >= 40 && +bpmN.value <= 240) setBpmC(+bpmN.value); });
+    bpmN.addEventListener('change', () => { setBpmC(+bpmN.value || +bpmC.value); bpmN.value = bpmC.value; });
+    document.querySelectorAll('#bgmConfirm .stepper button').forEach((btn) => {
+      btn.addEventListener('click', () => setBpmC(+bpmC.value + +btn.dataset.d));
+    });
+    posC.addEventListener('input', () => {
+      $('bgmcPosOut').textContent = fmtPos(+posC.value);
+      if (preview) { stopPreview(); clearTimeout(replayT); replayT = setTimeout(startPreview, 250); }
+    });
     reloadUserBgms();
 
     $('btnStart').addEventListener('click', startGame);
