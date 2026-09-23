@@ -144,17 +144,20 @@
     bpmEnd: 200,             // 挑战目标 BPM
     rampMeasures: 4,         // 每几小节提一次速
     rampStep: 5,             // 每次提多少
-    free: false,             // 无轨：不落轨道，固定大小的按键出现在屏幕任意位置
-    freeSize: 6,             // 无轨按键直径 = 屏宽的 1/freeSize
+    // 'lane'   4K / 7K，音符落在固定的 K 条轨上
+    // 'free'   无轨：仍然是下落式，只是横向连续、不吸附到轨上
+    // 'circle' 点圈：不下落，固定大小的圈出现在屏幕任意位置，外圈收拢到贴合时判定
+    mode: 'lane',
+    freeSize: 6,             // 无轨 / 点圈的音符宽度 = 屏宽的 1/freeSize
   };
+  const FREE_MODES = ['free', 'circle'];
 
-  /* 无轨的内部列数由按键大小推出来：按键直径 D = 1/freeSize，列心间距取 1.5D，
-     这样相邻按键之间留得下半个按键的空，横向才有抖动的余地。
-     1/6 的按键 → 4 列（占宽 4/6，剩 1/3 全是自由量）。 */
+  /* 无轨的内部列数由音符大小推出来：音符宽 D = 1/freeSize，列心间距 1.25D，
+     整块键区要比屏幕窄，空出来的部分才是横向自由量。
+     1/6 的音符 → 4 列，键区占宽 (1 + 3×1.25)/6 ≈ 0.79，还剩两成可以左右游走。 */
   function freeCols(freeSize) {
     return clamp(Math.floor(freeSize / 1.5), 3, 6);
   }
-  const FREE_ASPECT = 0.5;   // 横屏手机大致 2:1，生成时按它把纵向距离折成「屏宽」单位
 
   function normalizeOpts(o) {
     const opts = Object.assign({}, DEFAULT_OPTS, o || {});
@@ -168,10 +171,10 @@
     opts.bpmEnd = clamp(Math.round(+opts.bpmEnd || 200), 40, 400);
     opts.rampMeasures = clamp(Math.round(+opts.rampMeasures || 4), 1, 32);
     opts.rampStep = clamp(Math.round(+opts.rampStep || 5), 1, 50);
-    opts.free = !!opts.free;
+    if (opts.mode !== 'free' && opts.mode !== 'circle') opts.mode = 'lane';
     opts.freeSize = clamp(Math.round(+opts.freeSize || 6), 4, 10);
-    // 无轨的列数不是用户选的，是按键大小定的
-    if (opts.free) opts.keys = freeCols(opts.freeSize);
+    // 无轨 / 点圈的列数不是用户选的，是音符大小定的
+    if (opts.mode !== 'lane') opts.keys = freeCols(opts.freeSize);
     if (opts.challenge) opts.measures = challengeMeasures(opts);
     if (opts.preset === 'mixed') {
       let pool = Array.isArray(opts.mixedPool) ? opts.mixedPool.filter(k => PRESETS[k] && PRESETS[k].group !== 'chaos') : null;
@@ -649,7 +652,7 @@
       opts.challenge ? `ch${opts.bpmEnd}/${opts.rampMeasures}/${opts.rampStep}` : 'fix',
       opts.restRatio.toFixed(2), opts.shiftAmount.toFixed(2),
       opts.axisHand, opts.axisStyle, opts.fancyRatio.toFixed(2),
-      opts.free ? 'free' + opts.freeSize : 'lane',
+      opts.mode === 'lane' ? 'lane' : opts.mode + opts.freeSize,
     ].join('|');
     const rng = new RNG(hashString(seedStr));
     const beat = 60 / opts.bpm;          // 起始速度，用于预备拍等
@@ -720,7 +723,8 @@
     const notes = ctx.notes;
     notes.sort((a, b) => (a.t - b.t) || (a.col - b.col));
     for (let i = 0; i < notes.length; i++) notes[i].id = i;
-    if (opts.free) layoutFree(ctx, notes, opts);
+    if (opts.mode === 'free') layoutFree(ctx, notes, opts);
+    else if (opts.mode === 'circle') layoutCircle(ctx, notes, opts);
 
     const chart = {
       notes, keys: K, bpm: opts.bpm, beat, measures: opts.measures,
@@ -732,7 +736,8 @@
       rampMeasures: opts.rampMeasures, rampStep: opts.rampStep,
       restPeriod, restRatio: restPeriod ? 1 / restPeriod : 0,
       mainDiv: MAIN_DIV, restDiv: REST_DIV,
-      free: opts.free, freeSize: opts.freeSize, noteD: 1 / opts.freeSize, aspect: FREE_ASPECT,
+      mode: opts.mode, freeSize: opts.freeSize, noteD: 1 / opts.freeSize,
+      aspect: opts.mode === 'circle' ? CIRCLE_ASPECT : 0,
       phrases, opts, seedHash: rng.seed,
       presetName: mixed ? '散打' : PRESETS[opts.preset].name,
       warnings: [],
@@ -741,31 +746,91 @@
     return chart;
   }
 
-  /* ---------- 无轨：把列序列铺成屏幕上的自由点位 ---------- */
-  /* 无轨没有轨道，只有固定大小的按键落在屏幕任意位置。
-   * 横向仍然沿用列模型 —— 它承载了交互 / 切 / 叠的左右手结构，丢掉就没得练了 ——
-   * 但列心间距是按键直径的 1.5 倍，中间那半个按键的空就是横向自由量；纵向完全自由。
-   * 坐标归一化：nx 以场地宽为 1，ny 以场地高为 1。速度计算统一折到「屏宽」这个单位上，
-   * 纵向按 FREE_ASPECT 换算。
+  /* ---------- 无轨：把列序列摊成连续的横坐标 ---------- */
+  /* 无轨仍然是下落式：音符照样从上往下落到判定线，只是横向不吸附到 K 条轨上。
+   * 每个音符宽度固定（屏宽的 1/freeSize），可以落在任意横坐标，所以键盘映射不了。
    *
-   * 不重叠是靠构造保证的，不靠事后分离：
-   *   - 同一行（同时出现）里，每个音符的横向抖动上限取「相邻列间距减一个直径」的一半，
-   *     两个音符就算各自朝对方抖到底也只是刚好贴住。
-   *   - 同一只手在同一行里的几个音符共用一个纵向位置，看起来就是一串横排的和弦。
+   * 列模型还是骨架 —— 交互 / 切 / 叠的左右手结构全在里面，丢掉就没得练了 ——
+   * 但列心间距只有 1.25 个音符宽，整块键区比屏幕窄，空出来的部分就是横向自由量：
+   *   - 整块键区带着一个 drift 慢慢左右游走，步长受手的速度上限约束，不会瞬移；
+   *   - drift 每行都按「这一行最宽能到哪」夹一次，所以永远不会有音符飘出屏幕；
+   *   - 单键行额外再抖一点（它一个人占不满，能动的范围比和弦大得多）。
+   *
+   * 不重叠是靠构造保证的：同一行里所有音符共用同一个 drift，相对间距原样保留，
+   * 而列心间距本来就大于一个音符宽。
    */
+  const FREE_PITCH = 1.25;      // 列心间距 = 这么多个音符宽
   function layoutFree(ctx, notes, opts) {
+    const rng = ctx.rng, K = ctx.K;
+    const D = 1 / opts.freeSize;
+    const pitch = D * FREE_PITCH;
+    const baseX = (col) => D / 2 + col * pitch;       // drift 为 0 时的列心
+    const hand = { x: [0.5, 0.5], t: [-1e9, -1e9] };
+    let drift = (1 - (D + (K - 1) * pitch)) / 2;      // 键区先摆在正中间
+    let prevT = notes.length ? notes[0].t : 0;
+    let i = 0;
+    while (i < notes.length) {
+      let j = i;
+      while (j < notes.length && Math.abs(notes[j].t - notes[i].t) < 1e-9) j++;
+      const t = notes[i].t;
+
+      // 这一行占据的列范围，决定 drift 还能往两边挪多少
+      let lo = Infinity, hi = -Infinity;
+      for (let k = i; k < j; k++) {
+        const b = baseX(notes[k].col);
+        if (b < lo) lo = b;
+        if (b > hi) hi = b;
+      }
+      const dMin = D / 2 - lo, dMax = 1 - D / 2 - hi;
+
+      // 键区游走的步长：整块一起挪也是手要跟着走的，同样受速度上限约束。
+      // 只花一部分预算，剩下的留给音符在键区内部的跨列移动。
+      const step = VMAX * Math.max(0, t - prevT) * 0.4;
+      drift = clamp(drift + rng.float(-step, step), Math.min(dMin, dMax), Math.max(dMin, dMax));
+      prevT = t;
+
+      const single = (j - i) === 1;
+      for (let k = i; k < j; k++) {
+        const n = notes[k];
+        let x = baseX(n.col) + drift;
+        if (single) {
+          // 单键行一个人占不满，能动的范围大得多；同样按手的速度上限限幅
+          const h = n.hand === 1 ? 1 : 0;
+          const room = VMAX * Math.max(0, t - hand.t[h]);
+          const jitter = Math.min(pitch - D, room);
+          x += rng.float(-jitter, jitter);
+        }
+        n.nx = clamp(x, D / 2, 1 - D / 2);
+        const h = n.hand === 1 ? 1 : 0;
+        hand.x[h] = n.nx; hand.t[h] = t;
+      }
+      i = j;
+    }
+  }
+
+  /* ---------- 点圈：铺成屏幕上的二维点位 ---------- */
+  /* 点圈不下落：固定大小的圈直接出现在屏幕上，外面套一圈收缩的提示环，
+   * 环贴上圈的那一刻就是判定时刻。练的是瞄准 + 节奏。
+   *
+   * 横向照旧沿用列模型，纵向完全自由：每只手从上一个落点随机游走，步长受速度预算
+   * 约束 —— 横向那一跳已经吃掉一部分 VMAX，剩下的才归纵向用，所以快速纵叠时手根本
+   * 来不及上下动（本来就该这样），交替手能跑满整个高度。
+   *
+   * 不重叠靠构造保证：同一行里每个音符的横向抖动上限取「列间距减一个直径」的一半，
+   * 两个音符各自朝对方抖到底也只是刚好贴住；同手同行的音符共用一个纵向位置，
+   * 看起来就是一串横排的和弦。
+   */
+  const CIRCLE_ASPECT = 0.5;   // 横屏手机大致 2:1，生成时按它把纵向距离折成「屏宽」单位
+  function layoutCircle(ctx, notes, opts) {
     const rng = ctx.rng, K = ctx.K;
     const D = 1 / opts.freeSize;
     const pitch = K > 1 ? (1 - D) / (K - 1) : 0;      // 列心间距
     const jx = Math.max(0, (pitch - D) / 2) * 0.9;    // 横向抖动上限，留 10% 余量
-    const yLo = D / (2 * FREE_ASPECT), yHi = 1 - yLo;
-    const yStepCap = Math.min((yHi - yLo) / 2, 1.5 * D / FREE_ASPECT);
-    const hand = {
-      x: [0.5, 0.5], y: [0.5, 0.5], t: [-1e9, -1e9],
-    };
+    const yLo = D / (2 * CIRCLE_ASPECT), yHi = 1 - yLo;
+    const yStepCap = Math.min((yHi - yLo) / 2, 1.5 * D / CIRCLE_ASPECT);
+    const hand = { x: [0.5, 0.5], y: [0.5, 0.5], t: [-1e9, -1e9] };
     let i = 0;
     while (i < notes.length) {
-      // 同一时刻的一行一起处理：同手的音符必须落在同一个 y 上
       let j = i;
       while (j < notes.length && Math.abs(notes[j].t - notes[i].t) < 1e-9) j++;
       const t = notes[i].t;
@@ -775,14 +840,11 @@
         const h = n.hand === 1 ? 1 : 0;
         const nx = clamp(D / 2 + n.col * pitch + rng.float(-jx, jx), D / 2, 1 - D / 2);
         if (rowY[h] === null) {
-          // 这只手从上一个落点挪到这里，横向已经吃掉一部分速度预算，
-          // 剩下的才归纵向用 —— 快速纵叠时手根本来不及上下动，这是对的
           const dt = Math.max(0, t - hand.t[h]);
           const budget = VMAX * dt;
           const dx = Math.abs(nx - hand.x[h]);
-          const rest = Math.sqrt(Math.max(0, budget * budget - dx * dx)) / FREE_ASPECT;
-          const step = Math.min(rest, yStepCap);
-          rowY[h] = clamp(hand.y[h] + rng.float(-step, step), yLo, yHi);
+          const rest = Math.sqrt(Math.max(0, budget * budget - dx * dx)) / CIRCLE_ASPECT;
+          rowY[h] = clamp(hand.y[h] + rng.float(-1, 1) * Math.min(rest, yStepCap), yLo, yHi);
         }
         n.nx = nx; n.ny = rowY[h];
         hand.x[h] = nx; hand.t[h] = t;
@@ -820,8 +882,8 @@
     if (dup) w.push(`有 ${dup} 处同一时刻同一列重复`);
     if (bigChord) w.push(`有 ${bigChord} 行押数超过键数`);
     if (tooClose) w.push(`有 ${tooClose} 处同列间隔 < 45ms（BPM 偏高，判定会很勉强）`);
-    if (chart.free) {
-      // 同时出现的按键一旦叠在一起就分不清该点哪个
+    if (chart.mode === 'free') {
+      // 同时落下的音符一旦横向叠在一起就分不清该点哪个
       const D = chart.noteD;
       let overlap = 0, oob = 0;
       let i2 = 0;
@@ -830,7 +892,25 @@
         while (j2 < notes.length && Math.abs(notes[j2].t - notes[i2].t) < 1e-9) j2++;
         for (let a = i2; a < j2; a++) {
           const na = notes[a];
-          const yPad = D / (2 * chart.aspect);
+          if (na.nx < D / 2 - 1e-9 || na.nx > 1 - D / 2 + 1e-9) oob++;
+          for (let b = a + 1; b < j2; b++) {
+            if (Math.abs(na.nx - notes[b].nx) < D - 1e-9) overlap++;
+          }
+        }
+        i2 = j2;
+      }
+      if (overlap) w.push(`有 ${overlap} 对同时落下的音符横向叠在一起`);
+      if (oob) w.push(`有 ${oob} 个音符越出屏幕`);
+    } else if (chart.mode === 'circle') {
+      // 同时出现的圈一旦叠在一起就分不清该点哪个
+      const D = chart.noteD, yPad = D / (2 * chart.aspect);
+      let overlap = 0, oob = 0;
+      let i2 = 0;
+      while (i2 < notes.length) {
+        let j2 = i2;
+        while (j2 < notes.length && Math.abs(notes[j2].t - notes[i2].t) < 1e-9) j2++;
+        for (let a = i2; a < j2; a++) {
+          const na = notes[a];
           if (na.nx < D / 2 - 1e-9 || na.nx > 1 - D / 2 + 1e-9
               || na.ny < yPad - 1e-9 || na.ny > 1 - yPad + 1e-9) oob++;
           for (let b = a + 1; b < j2; b++) {
@@ -841,8 +921,8 @@
         }
         i2 = j2;
       }
-      if (overlap) w.push(`有 ${overlap} 对同时出现的按键叠在一起`);
-      if (oob) w.push(`有 ${oob} 个按键越出场地`);
+      if (overlap) w.push(`有 ${overlap} 对同时出现的圈叠在一起`);
+      if (oob) w.push(`有 ${oob} 个圈越出场地`);
     }
     return w;
   }
@@ -851,7 +931,7 @@
     generate, validate, PRESETS, PRESET_KEYS, FANCY_KEYS, DEFAULT_OPTS,
     normalizeOpts, restPeriodOf, challengeMeasures, challengeSteps, bpmOfMeasure,
     KEY_OPTIONS, MAIN_DIV, REST_DIV, PHRASE_MEASURES, MAX_MEASURES,
-    colToX, xToCol, colHand, freeCols, FREE_ASPECT,
+    colToX, xToCol, colHand, freeCols, FREE_MODES,
   };
 })(
   typeof module !== 'undefined' ? module.exports : (window.MG = window.MG || {}),

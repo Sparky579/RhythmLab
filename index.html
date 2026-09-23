@@ -11,7 +11,7 @@
   <link rel="manifest" href="manifest.webmanifest" />
   <link rel="apple-touch-icon" href="icons/apple-touch-icon.png" />
   <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
-  <link rel="stylesheet" href="css/style.css?v=48" />
+  <link rel="stylesheet" href="css/style.css?v=49" />
 </head>
 <body>
   <!-- 设置页 -->
@@ -21,11 +21,11 @@
         <span class="logo"></span>
         <div>
           <h1>RhythmLab</h1>
-          <p>4K / 7K / 无轨 谱面生成训练器 · 电脑与手机触屏 · <span id="buildTag">v-</span></p>
+          <p>4K / 7K / 无轨 / 点圈 谱面生成训练器 · 电脑与手机触屏 · <span id="buildTag">v-</span></p>
         </div>
       </div>
       <div class="hero-actions">
-        <a id="btnApk" class="ghost" href="RhythmLab-v48.apk" download>⬇ 安卓 App</a>
+        <a id="btnApk" class="ghost" href="RhythmLab-v49.apk" download>⬇ 安卓 App</a>
         <button id="btnFullscreen" class="ghost" title="全屏">⛶ 全屏</button>
       </div>
     </header>
@@ -94,11 +94,12 @@
             <button data-v="4" class="active">4K</button>
             <button data-v="7">7K</button>
             <button data-v="free" id="keyFree">无轨</button>
+            <button data-v="circle" id="keyCircle">点圈</button>
           </div>
           <p class="hint" id="keysHint"></p>
           <div id="optFree" class="subopts hidden">
             <div class="field">
-              <label>按键大小 <output id="freeSizeOut">1/6 屏宽</output></label>
+              <label><span id="freeSizeLabel">音符宽度 </span><output id="freeSizeOut">1/6 屏宽</output></label>
               <input type="range" id="freeSize" min="4" max="10" step="1" value="6" />
               <p class="hint" id="freeHint"></p>
             </div>
@@ -313,13 +314,13 @@
     </div>
   </div>
 
-  <script src="js/rng.js?v=48"></script>
-  <script src="js/generator.js?v=48"></script>
-  <script src="js/bgm.js?v=48"></script>
-  <script src="js/bgmuser.js?v=48"></script>
-  <script src="js/audio.js?v=48"></script>
-  <script src="js/game.js?v=48"></script>
-  <script src="js/ui.js?v=48"></script>
+  <script src="js/rng.js?v=49"></script>
+  <script src="js/generator.js?v=49"></script>
+  <script src="js/bgm.js?v=49"></script>
+  <script src="js/bgmuser.js?v=49"></script>
+  <script src="js/audio.js?v=49"></script>
+  <script src="js/game.js?v=49"></script>
+  <script src="js/ui.js?v=49"></script>
   <script>
   /* 装到桌面后离线可玩；原生壳里不注册（资源本来就在本地） */
   if ('serviceWorker' in navigator && !window.__RHYTHMLAB_NATIVE__ && location.protocol === 'https:') {
@@ -332,7 +333,7 @@
   /* 版本自检：页面与脚本必须同一版本，且初始化要真的跑完。
      不一致多半是浏览器缓存错配，自动重载一次；再不行就给手动出口，而不是留个点不动的死页面。 */
   (function () {
-    var WANT = '48';
+    var WANT = '49';
     var MG = window.MG || {};
     var bad = MG.BUILD !== WANT ? '脚本版本与页面不一致（缓存错配）' : (MG.READY ? '' : '初始化未完成');
     if (!bad) { try { sessionStorage.removeItem('mg_heal'); } catch (e) {} return; }

@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '48';
+  const BUILD = '49';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -17,8 +17,8 @@
     group: 'trill',
     preset: 'trill_basic',
     keys: 4,
-    free: false,            // 无轨：固定大小的按键落在屏幕任意位置，只能触屏打
-    freeSize: 6,            // 无轨按键直径 = 场地宽的 1/freeSize
+    mode: 'lane',           // 'lane' 4K/7K | 'free' 无轨 | 'circle' 点圈（后两者只能触屏打）
+    freeSize: 6,            // 无轨 / 点圈的音符宽度 = 场地宽的 1/freeSize
     bpm: 160,
     measures: 16,
     seed: 'demo',
@@ -59,10 +59,10 @@
         : (G.PRESET_KEYS.find(k => G.PRESETS[k].group === state.group) || 'trill_basic');
     }
     if (G.KEY_OPTIONS.indexOf(state.keys) < 0) state.keys = 4;
-    state.free = !!state.free;
+    if (state.mode !== 'free' && state.mode !== 'circle') state.mode = 'lane';
     state.freeSize = Math.max(4, Math.min(10, Math.round(+state.freeSize || 6)));
-    // 无轨要求能点到屏幕任意位置，鼠标勉强能试，键盘完全没法打——非触屏设备直接不给选
-    if (state.free && !isTouch()) state.free = false;
+    // 这两种模式都要点到屏幕上的任意横坐标，键盘映射不了——非触屏设备不给选
+    if (state.mode !== 'lane' && !isTouch()) state.mode = 'lane';
   }
   function saveState() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
@@ -419,14 +419,24 @@
     $('optMixed').classList.toggle('hidden', !mixed);
     if (mixed) renderMixedPool();
 
-    $('optFree').classList.toggle('hidden', !state.free);
-    if (state.free) {
+    $('optFree').classList.toggle('hidden', state.mode === 'lane');
+    if (state.mode !== 'lane') {
       const cols = G.freeCols(state.freeSize);
-      $('keysHint').textContent = `无轨：没有轨道，固定大小的按键出现在屏幕任意位置，`
-        + `外面那圈环收拢到按键大小时就是判定时刻。只能触屏打。`;
-      $('freeHint').textContent = `按键直径 = 场地宽的 1/${state.freeSize}，`
-        + `横向可落 ${cols} 个位置、纵向连续。按键越小位置越多、越考验瞄准。`;
-      $('keyHelp').textContent = '点到哪个按键就打哪个，键盘打不了。Esc 暂停。';
+      const free = state.mode === 'free';
+      $('keysHint').textContent = free
+        ? '无轨：照样是下落式，判定线也还在，只是没有轨道分隔——音符宽度固定，'
+          + '横坐标连续，落哪儿就得点哪儿。只能触屏打。'
+        : '点圈：不下落。固定大小的圈直接出现在屏幕上，外面那圈提示环收拢到贴合时'
+          + '就是判定时刻。练瞄准。只能触屏打。';
+      $('freeSizeLabel').textContent = free ? '音符宽度 ' : '圈的大小 ';
+      $('freeHint').textContent = (free
+        ? `音符宽度 = 屏宽的 1/${state.freeSize}，横向落点由 ${cols} 列的骨架加游走摊开，`
+          + '越窄越要瞄得准。'
+        : `圈的直径 = 场地宽的 1/${state.freeSize}，横向 ${cols} 个位置打底、纵向连续，`
+          + '越小位置越多、越考验瞄准。');
+      $('keyHelp').textContent = free
+        ? '音符落到判定线时点它所在的横向位置，键盘打不了。Esc 暂停。'
+        : '点到哪个圈就打哪个，键盘打不了。Esc 暂停。';
     } else {
       const K = state.keys;
       const labels = MG.KEYMAP[K].labels.join(' ');
@@ -542,7 +552,7 @@
   function genOpts() {
     return {
       preset: state.preset, keys: state.keys, bpm: state.bpm, seed: state.seed,
-      free: state.free, freeSize: state.freeSize,
+      mode: state.mode, freeSize: state.freeSize,
       measures: state.measures, restRatio: state.restRatio,
       challenge: state.challenge, bpmEnd: state.bpmEnd,
       rampMeasures: state.rampMeasures, rampStep: state.rampStep,
@@ -603,7 +613,7 @@
     const g = cv.getContext('2d');
     g.setTransform(dpr, 0, 0, dpr, 0, 0);
     g.fillStyle = '#080a12'; g.fillRect(0, 0, cw, chh);
-    if (ch.free) return drawPreviewFree(g, ch, cw, chh);
+    if (ch.mode === 'circle') return drawPreviewCircle(g, ch, cw, chh);
 
     const K = ch.keys, span = ch.beat * 16, pad = 10;
     const yOf = (t) => chh - pad - (t / span) * (chh - pad * 2);
@@ -622,8 +632,11 @@
       g.strokeStyle = b % 4 === 0 ? 'rgba(255,255,255,0.14)' : 'rgba(255,255,255,0.05)';
       g.beginPath(); g.moveTo(0, yOf(b * ch.beat)); g.lineTo(cw, yOf(b * ch.beat)); g.stroke();
     }
-    g.strokeStyle = 'rgba(255,255,255,0.08)';
-    for (let i = 1; i < K; i++) { g.beginPath(); g.moveTo(lw * i, 0); g.lineTo(lw * i, chh); g.stroke(); }
+    // 无轨没有轨道分隔线可画——那正是它和 4K / 7K 的区别
+    if (ch.mode === 'lane') {
+      g.strokeStyle = 'rgba(255,255,255,0.08)';
+      for (let i = 1; i < K; i++) { g.beginPath(); g.moveTo(lw * i, 0); g.lineTo(lw * i, chh); g.stroke(); }
+    }
 
     g.font = '11px system-ui, sans-serif';
     g.fillStyle = 'rgba(255,255,255,0.5)';
@@ -638,17 +651,20 @@
       g.fillStyle = 'rgba(255,255,255,0.6)';
       g.fillText(p.name, 8, y);
     }
-    const h = Math.max(3, Math.min(7, lw * 0.32));
+    const nw = ch.mode === 'free' ? cw * ch.noteD : lw;
+    const h = Math.max(3, Math.min(7, nw * 0.32));
     for (const n of ch.notes) {
       if (n.t >= span) break;
-      g.fillStyle = (K === 7 && n.col === 3) ? MG.JUDGE.THUMB_COLOR : MG.JUDGE.HAND_COLORS[n.hand];
-      g.fillRect(n.col * lw + 2, yOf(n.t) - h / 2, lw - 4, h);
+      g.fillStyle = (ch.mode === 'lane' && K === 7 && n.col === 3)
+        ? MG.JUDGE.THUMB_COLOR : MG.JUDGE.HAND_COLORS[n.hand];
+      const x = ch.mode === 'free' ? n.nx * cw - nw / 2 : n.col * lw;
+      g.fillRect(x + 2, yOf(n.t) - h / 2, nw - 4, h);
     }
   }
 
-  /* 无轨没有「下落」可画，改成俯视的落点图：按时间先后从暗到亮，
+  /* 点圈没有「下落」可画，改成俯视的落点图：按时间先后从暗到亮，
      连线表示同一只手的移动路线，一眼看出手要在屏幕上跑多远。 */
-  function drawPreviewFree(g, ch, cw, chh) {
+  function drawPreviewCircle(g, ch, cw, chh) {
     const pad = 8;
     const aspect = ch.aspect || 0.5;
     let fw = cw - pad * 2, fh = fw * aspect;
@@ -934,20 +950,22 @@
     $('btnSeed').addEventListener('click', () => { state.seed = randomSeed(); $('seed').value = state.seed; refresh(); });
 
     bindSeg('keys', v => {
-      state.free = v === 'free';
-      if (!state.free) state.keys = +v;
+      state.mode = (v === 'free' || v === 'circle') ? v : 'lane';
+      if (state.mode === 'lane') state.keys = +v;
       syncSubopts(); refresh();
     });
     bindRange('freeSize', 'freeSizeOut', 'freeSize', v => `1/${v} 屏宽`, null,
-      () => { if ($('optFree') && state.free) syncSubopts(); });
-    // 非触屏设备上把「无轨」置灰：它靠的就是点屏幕任意位置
+      () => { if ($('optFree') && state.mode !== 'lane') syncSubopts(); });
+    // 非触屏设备上把这两个置灰：它们靠的就是点屏幕上的任意横坐标
     if (!isTouch()) {
-      const kf = $('keyFree');
-      if (kf) { kf.disabled = true; kf.title = '无轨只能触屏打'; }
+      for (const id of ['keyFree', 'keyCircle']) {
+        const b = $(id);
+        if (b) { b.disabled = true; b.title = '只能触屏打'; }
+      }
     }
     bindSeg('axisHand', v => { state.axisHand = v; refresh(); });
     bindSeg('axisStyle', v => { state.axisStyle = v; refresh(); });
-    setSeg('keys', state.free ? 'free' : state.keys);
+    setSeg('keys', state.mode === 'lane' ? state.keys : state.mode);
     setSeg('axisHand', state.axisHand);
     setSeg('axisStyle', state.axisStyle);
 

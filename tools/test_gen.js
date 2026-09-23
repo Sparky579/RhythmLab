@@ -107,31 +107,38 @@ for (const key of G.PRESET_KEYS.concat(['mixed'])) {
 console.table(rows);
 console.log('谱面', total, '警告', warnTotal, '失败', fails);
 
-/* 无轨：坐标齐全、不叠不出界 */
-{
+/* 无轨（下落式，横向连续）与点圈（二维定点）：坐标齐全、不叠不出界 */
+for (const mode of ['free', 'circle']) {
   let bad = 0;
   const seen = [];
   for (const key of G.PRESET_KEYS.concat(['mixed'])) {
     for (const size of [4, 6, 8, 10]) {
       for (const seed of ['a', 'b']) {
-        const c = G.generate({ preset: key, free: true, freeSize: size, bpm: 200, seed, measures: 16 });
-        if (c.warnings.length) { bad++; console.log('无轨 WARN', key, size, seed, c.warnings.join(';')); }
-        if (c.notes.some(n => typeof n.nx !== 'number' || typeof n.ny !== 'number')) {
-          bad++; console.log('无轨 缺坐标', key, size, seed);
+        const c = G.generate({ preset: key, mode, freeSize: size, bpm: 200, seed, measures: 16 });
+        if (c.warnings.length) { bad++; console.log(mode, 'WARN', key, size, seed, c.warnings.join(';')); }
+        const needY = mode === 'circle';
+        if (c.notes.some(n => typeof n.nx !== 'number' || (needY && typeof n.ny !== 'number'))) {
+          bad++; console.log(mode, '缺坐标', key, size, seed);
         }
         if (key === 'stream_single' && seed === 'a') {
-          const ys = c.notes.map(n => n.ny);
-          seen.push({
-            按键: '1/' + size, 内部列数: c.keys,
-            不同x: new Set(c.notes.map(n => +n.nx.toFixed(4))).size,
-            y跨度: (Math.max(...ys) - Math.min(...ys)).toFixed(2),
-          });
+          const xs = c.notes.map(n => n.nx);
+          const row = {
+            音符: '1/' + size, 内部列数: c.keys,
+            不同x: new Set(xs.map(v => +v.toFixed(4))).size,
+            x跨度: (Math.max(...xs) - Math.min(...xs)).toFixed(2),
+          };
+          if (needY) {
+            const ys = c.notes.map(n => n.ny);
+            row.y跨度 = (Math.max(...ys) - Math.min(...ys)).toFixed(2);
+          }
+          seen.push(row);
         }
       }
     }
   }
+  console.log('---', mode === 'free' ? '无轨' : '点圈', '---');
   console.table(seen);
-  console.log('无轨失败', bad);
+  console.log(mode, '失败', bad);
   fails += bad;
 }
 
