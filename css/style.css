@@ -250,3 +250,8 @@ a.ghost {
 .stepper { margin-bottom: 4px; }
 .stepper button { padding: 6px 0; min-width: 44px; flex: 0 0 auto; font-variant-numeric: tabular-nums; }
 .stepper input[type=number] { flex: 1; width: auto; min-width: 60px; text-align: center; }
+
+/* 设置页上的弹窗（确认节拍）是蒙版：钉在视口上，而不是相对页面顶部。
+   用 absolute 的话页面滚到下面时弹窗在最上方，看起来像把设置挤到了它下面 */
+body > .overlay { position: fixed; }
+body.modal-open { overflow: hidden; }

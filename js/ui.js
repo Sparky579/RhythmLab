@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '52';
+  const BUILD = '53';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -327,11 +327,13 @@
     offEl.value = Math.round(pending.startSec * 1000);
     $('bgmcOffOut').textContent = offEl.value + ' ms';
     $('bgmConfirm').classList.remove('hidden');
+    document.body.classList.add('modal-open');   // 背景别跟着滚
   }
 
   function closeConfirm() {
     stopPreview();
     $('bgmConfirm').classList.add('hidden');
+    document.body.classList.remove('modal-open');
     pending = null;
   }
 
