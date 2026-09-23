@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '54';
+  const BUILD = '55';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -24,6 +24,7 @@
     lenMode: 'beats',       // 'time' 改 BPM 时保持时长 | 'beats' 保持拍数
     lenSec: 120,
     beats: 64,
+    noteDiv: 16,            // 主段几分音；休息段自动取一半
     seed: 'demo',
     restRatio: 0,
     challenge: false,
@@ -65,6 +66,8 @@
         ? 'rand_low'
         : (G.PRESET_KEYS.find(k => G.PRESETS[k].group === state.group) || 'trill_basic');
     }
+    if (G.NOTE_DIVS.indexOf(+state.noteDiv) < 0) state.noteDiv = 16;
+    state.noteDiv = +state.noteDiv;
     if (state.lenMode !== 'time') state.lenMode = 'beats';
     state.beats = clampBeats(state.beats);
     state.lenSec = Math.max(1, Math.min(3600, +state.lenSec || 120));
@@ -743,7 +746,7 @@
     return {
       preset: state.preset, keys: state.keys, bpm: state.bpm, seed: state.seed,
       mode: state.mode, freeSize: state.freeSize,
-      beats: effBeats(), restRatio: state.restRatio,
+      beats: effBeats(), noteDiv: state.noteDiv, restRatio: state.restRatio,
       challenge: state.challenge, bpmEnd: state.bpmEnd,
       rampMeasures: state.rampMeasures, rampStep: state.rampStep,
       shiftAmount: state.shiftAmount, axisHand: state.axisHand, axisStyle: state.axisStyle,
@@ -763,21 +766,24 @@
       }
       drawPreview(chart);
       const secs = chart.duration;
-      const rowMs = (chart.beat / G.MAIN_DIV * 1000).toFixed(0);
+      const D = state.noteDiv, perSec = (b) => (b / 60 * D / 4).toFixed(1);
+      const rowMs = (chart.beat * 4 / D * 1000).toFixed(0);
       $('stats').innerHTML =
         `<span>音符数</span><b>${chart.notes.length}</b>` +
         `<span>时长</span><b>${Math.floor(secs / 60)}:${String(Math.round(secs % 60)).padStart(2, '0')}</b>` +
         `<span>平均密度</span><b>${(chart.notes.length / secs).toFixed(1)} /s</b>` +
         (chart.challenge
           ? `<span>BPM 爬升</span><b>${chart.bpmStart} → ${chart.bpmEnd}</b>`
-          : `<span>16 分间隔</span><b>${rowMs} ms</b>`) +
+          : `<span>${D} 分间隔</span><b>${rowMs} ms</b>`) +
         `<span>种子码</span><b>${chart.seedHash.toString(16)}</b>`;
       $('warnings').textContent = chart.warnings.join('；');
       syncLen();
       const endBpm = chart.challenge ? chart.bpmEnd : state.bpm;
       $('bpmHint').textContent = chart.challenge
-        ? `起步每秒 ${(state.bpm / 60 * 4).toFixed(1)} 行，冲到 ${endBpm} 时每秒 ${(endBpm / 60 * 4).toFixed(1)} 行。`
-        : `主段 16 分音 = 每秒 ${(state.bpm / 60 * 4).toFixed(1)} 行，休息段 8 分音。难度只由 BPM 决定。`;
+        ? `起步每秒 ${perSec(state.bpm)} 行，冲到 ${endBpm} 时每秒 ${perSec(endBpm)} 行。`
+        : `主段 ${D} 分音 = 每秒 ${perSec(state.bpm)} 行，休息段 ${D / 2} 分音。`;
+      $('noteDivHint').textContent = `一小节 ${D} 行（每拍 ${D / 4} 行）`
+        + (D % 3 === 0 ? '，三连音系' : '') + `；休息段取一半，${D / 2} 分音。默认 16。`;
       if (chart.challenge) {
         const grades = Math.floor((chart.measures - 1) / state.rampMeasures) + 1;
         let txt = `${chart.bpmStart} → ${chart.bpmEnd} BPM，每 ${state.rampMeasures} 小节 +${state.rampStep}，`
@@ -790,8 +796,8 @@
       }
       const period = G.restPeriodOf(state.restRatio);
       $('restHint').textContent = period
-        ? `每 ${period} 小节休息 1 小节（实际 ${(100 / period).toFixed(0)}%），休息段只有 8 分音单键。`
-        : '不插入休息段，全程 16 分音。';
+        ? `每 ${period} 小节休息 1 小节（实际 ${(100 / period).toFixed(0)}%），休息段只有 ${state.noteDiv / 2} 分音单键。`
+        : `不插入休息段，全程 ${state.noteDiv} 分音。`;
     }, 60);
   }
 
@@ -1114,6 +1120,8 @@
       refresh(); syncBgmHint();
     });
 
+    setSeg('noteDiv', state.noteDiv);
+    bindSeg('noteDiv', v => { state.noteDiv = +v; refresh(); });
     bindSeg('lenMode', v => {
       // 切换时以当前实际值为准，另一栏数值不跳
       if (v === 'beats') state.beats = effBeats();

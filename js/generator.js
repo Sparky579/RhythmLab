@@ -8,8 +8,9 @@
   'use strict';
   const RNG = deps.RNG, hashString = deps.hashString;
 
-  const MAIN_DIV = 4;          // 主段每拍行数 = 16 分音
-  const REST_DIV = 2;          // 休息段每拍行数 = 8 分音
+  const MAIN_DIV = 4;          // 默认主段每拍行数 = 16 分音（opts.noteDiv 可改）
+  const REST_DIV = 2;          // 默认休息段每拍行数 = 8 分音（总是主段的一半）
+  const NOTE_DIVS = [4, 8, 12, 16, 24, 32];   // 可选的「几分音」
   const PHRASE_MEASURES = 2;   // 乐句 = 2 小节
   const KEY_OPTIONS = [4, 7];
   const VMAX = 3.5;
@@ -135,7 +136,8 @@
     bpm: 160,
     seed: 'demo',
     measures: 16,
-    beats: 0,                // 总拍数（>0 时优先于 measures，可以不是 4 的倍数；挑战模式不用）
+    beats: 0,
+    noteDiv: 16,             // 主段几分音（一小节几行）；休息段是它的一半                // 总拍数（>0 时优先于 measures，可以不是 4 的倍数；挑战模式不用）
     keys: 4,                 // 4 | 7
     restRatio: 0,            // 休息段比例（休息段只有 8 分音），默认不插入
     shiftAmount: 0.5,        // 交互位移幅度 0..1
@@ -178,6 +180,7 @@
     opts.freeSize = clamp(Math.round(+opts.freeSize || 6), 4, 10);
     // 无轨 / 点圈的列数不是用户选的，是音符大小定的
     if (opts.mode !== 'lane') opts.keys = freeCols(opts.freeSize);
+    opts.noteDiv = NOTE_DIVS.indexOf(+opts.noteDiv) >= 0 ? +opts.noteDiv : 16;
     opts.beats = Math.round(+opts.beats || 0);
     if (opts.challenge) {
       opts.measures = challengeMeasures(opts);
@@ -252,13 +255,16 @@
 
   /* 乱：本行是否有音符。「密度」指多押的多少，不是留白多少，
      所以这里默认几乎每行都有键，只在弱拍上留极少量空行做呼吸 */
-  function rowActive(rng, preset, r, div) {
+  /* i 是本行在小节里的序号，R 是一小节的行数（= 几分音）。
+     拍上 / 半拍上的判断都按小节里的位置算，12 分、6 分这种不整除一拍的也成立 */
+  const onBeat = (i, R) => (i * 4) % R === 0;
+  const onHalfBeat = (i, R) => (i * 8) % R === 0 && !onBeat(i, R);
+  function rowActive(rng, preset, i, R) {
     const gap = preset.gap || 0;
     if (gap <= 0) return true;
-    const pos = r % div;
     let p;
-    if (pos === 0) p = gap * 0.15;          // 重拍基本不空
-    else if (pos * 2 === div) p = gap * 0.6;
+    if (onBeat(i, R)) p = gap * 0.15;          // 重拍基本不空
+    else if (onHalfBeat(i, R)) p = gap * 0.6;
     else p = gap;
     return !rng.chance(p);
   }
@@ -359,17 +365,18 @@
     return rng.weighted(cands, w).mask;
   }
 
-  function genRow(ctx, preset, pp, r, div, isRest) {
+  function genRow(ctx, preset, pp, i, R, isRest) {
     const rng = ctx.rng, K = ctx.K;
     const rule = isRest ? 'rest' : preset.rule;
-    if (preset.rule === 'random' && !rowActive(rng, preset, r, div)) return 0;
+    if (preset.rule === 'random' && !rowActive(rng, preset, i, R)) return 0;
 
     let k;
     if (isRest) k = 1;
     else if (preset.chordOnBeat) {
+      // 每拍 perBeat 个多押点；一小节行数不够时（4 分、8 分）就每行都是
       const per = preset.perBeat || 1;
-      const step = Math.max(1, Math.round(div / per));
-      k = (r % step === 0) ? pickChordSize(rng, chordTable(preset, K, true)) : 1;
+      const hit = (i * 4 * per) % R === 0 || R <= 4 * per;
+      k = hit ? pickChordSize(rng, chordTable(preset, K, true)) : 1;
     } else {
       k = pickChordSize(rng, chordTable(preset, K, false));
     }
@@ -619,7 +626,7 @@
     let n = 0;
     for (let i = m; i < Math.min(m + PHRASE_MEASURES, opts.measures); i++) {
       const rest = restPeriod > 0 && ((i + 1) % restPeriod === 0);
-      n += 4 * (rest ? REST_DIV : MAIN_DIV);
+      n += rest ? opts.noteDiv / 2 : opts.noteDiv;
     }
     pp.N = Math.max(2, n);
     if (preset.anchor) pp.anchorCol = rng.int(0, K - 1);
@@ -664,7 +671,7 @@
       opts.restRatio.toFixed(2), opts.shiftAmount.toFixed(2),
       opts.axisHand, opts.axisStyle, opts.fancyRatio.toFixed(2),
       opts.mode === 'lane' ? 'lane' : opts.mode + opts.freeSize,
-    ].join('|');
+    ].concat(opts.noteDiv !== 16 ? ['d' + opts.noteDiv] : []).join('|');   // 默认 16 分时种子不变，老谱面照旧
     const rng = new RNG(hashString(seedStr));
     const beat = 60 / opts.bpm;          // 起始速度，用于预备拍等
     const tempo = buildTempo(opts);
@@ -682,7 +689,7 @@
 
     for (let m = 0; m < opts.measures; m++) {
       const isRest = restPeriod > 0 && ((m + 1) % restPeriod === 0);
-      const div = isRest ? REST_DIV : MAIN_DIV;
+      const R = isRest ? opts.noteDiv / 2 : opts.noteDiv;   // 本小节行数
 
       if (m % PHRASE_MEASURES === 0 || !pp) {
         if (mixed) {
@@ -712,20 +719,18 @@
       if (preset.kind === 'jackline') ctx.jackCol = pickJackCol(ctx, opts);
 
       const mBeat = 60 / tempo.measureBpm[m];
-      for (let b = 0; b < 4; b++) {
-        for (let r = 0; r < div; r++) {
-          const t = tempo.measureTime[m] + (b + r / div) * mBeat;
-          if (preset.kind === 'trill') {
-            genTrillNote(ctx, preset, pp, t);
-          } else if (preset.kind === 'jackline') {
-            const mask = 1 << ctx.jackCol;
-            commitRow(ctx, mask);
-            pushRow(ctx, mask, t);
-          } else {
-            const mask = genRow(ctx, preset, pp, r, div, isRest);
-            commitRow(ctx, mask);
-            if (mask) pushRow(ctx, mask, t);
-          }
+      for (let i = 0; i < R; i++) {
+        const t = tempo.measureTime[m] + (i * 4 / R) * mBeat;
+        if (preset.kind === 'trill') {
+          genTrillNote(ctx, preset, pp, t);
+        } else if (preset.kind === 'jackline') {
+          const mask = 1 << ctx.jackCol;
+          commitRow(ctx, mask);
+          pushRow(ctx, mask, t);
+        } else {
+          const mask = genRow(ctx, preset, pp, i, R, isRest);
+          commitRow(ctx, mask);
+          if (mask) pushRow(ctx, mask, t);
         }
       }
       if (isRest) breathe(ctx);
@@ -749,7 +754,8 @@
       bpmEnd: tempo.measureBpm[opts.measures - 1],
       rampMeasures: opts.rampMeasures, rampStep: opts.rampStep,
       restPeriod, restRatio: restPeriod ? 1 / restPeriod : 0,
-      mainDiv: MAIN_DIV, restDiv: REST_DIV,
+      noteDiv: opts.noteDiv,
+      mainDiv: opts.noteDiv / 4, restDiv: opts.noteDiv / 8,   // 每拍行数（12 分 = 3，6 分 = 1.5）
       mode: opts.mode, freeSize: opts.freeSize, noteD: 1 / opts.freeSize,
       aspect: opts.mode === 'circle' ? CIRCLE_ASPECT : 0,
       phrases, opts, seedHash: rng.seed,
@@ -944,7 +950,7 @@
   root.Generator = {
     generate, validate, PRESETS, PRESET_KEYS, FANCY_KEYS, DEFAULT_OPTS,
     normalizeOpts, restPeriodOf, challengeMeasures, challengeSteps, bpmOfMeasure,
-    KEY_OPTIONS, MAIN_DIV, REST_DIV, PHRASE_MEASURES, MAX_MEASURES,
+    KEY_OPTIONS, MAIN_DIV, REST_DIV, NOTE_DIVS, PHRASE_MEASURES, MAX_MEASURES,
     colToX, xToCol, colHand, freeCols, FREE_MODES,
   };
 })(
