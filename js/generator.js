@@ -282,6 +282,8 @@
         // 每个双押的后继唯一（就是它的补集），整首只剩两组和弦来回倒。
         if (rule === 'stream' && (preset.sea ? popcount(m & last) > 1 : (m & last))) continue;
         if (rule === 'jack' && !relaxShare && !(m & last)) continue;
+        // 叠里不要单纵连（单 3 接单 3）：放宽共列时也不行
+        if (rule === 'jack' && k === 1 && m === last) continue;
       }
       const maxRun = rule === 'rest' ? 2 : pp.maxRun;
       let bad = false;
@@ -381,6 +383,12 @@
       k = pickChordSize(rng, chordTable(preset, K, false));
     }
     k = clamp(k, 1, K);
+    // 叠：上一行是单键时这一行不能再是单键——必须共列的话只能是同一列，就成了单纵连。
+    // 升成双押（仍包含上一行那列），纵连落在和弦里
+    if (rule === 'jack' && k === 1 && K > 1) {
+      const last = ctx.prevRows.length ? ctx.prevRows[ctx.prevRows.length - 1] : 0;
+      if (last && popcount(last) === 1) k = 2;
+    }
 
     const THRESH = 3.0;
     for (let attempt = 0; attempt < 2; attempt++) {

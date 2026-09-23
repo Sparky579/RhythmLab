@@ -1,11 +1,11 @@
 /* 离线缓存：装到桌面后没网也能打。
    版本号跟着 BUILD 走，换版本会整包替换旧缓存。 */
-const VER = 'rhythmlab-v56';
+const VER = 'rhythmlab-v57';
 const CORE = [
   './', './index.html', './manifest.webmanifest',
-  './css/style.css?v=56',
-  './js/rng.js?v=56', './js/generator.js?v=56', './js/bgm.js?v=56',
-  './js/bgmuser.js?v=56', './js/audio.js?v=56', './js/game.js?v=56', './js/ui.js?v=56',
+  './css/style.css?v=57',
+  './js/rng.js?v=57', './js/generator.js?v=57', './js/bgm.js?v=57',
+  './js/bgmuser.js?v=57', './js/audio.js?v=57', './js/game.js?v=57', './js/ui.js?v=57',
   './icons/icon-192.png', './icons/icon-512.png',
 ];
 
