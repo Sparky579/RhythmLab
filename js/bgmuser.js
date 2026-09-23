@@ -595,7 +595,7 @@
     return {
       id: 'user_' + rec.id, group: '我的音乐', name: rec.name, kind: 'file',
       baseBpm: rec.bpm, url: urlFor(rec),
-      custom: true, startSec: rec.startSec,
+      custom: true, startSec: rec.startSec, endSec: end, rec,
       loopBars: Math.max(1, Math.floor(usable / barDur)),
       desc: `自己上传 · ${rec.bpm} BPM`,
     };

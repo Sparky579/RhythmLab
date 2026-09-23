@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '55';
+  const BUILD = '56';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -238,7 +238,10 @@
     for (const e of userEntries) {
       const row = document.createElement('div');
       row.className = 'my-bgm-row';
-      row.innerHTML = `<span>${e.name}</span><small>${e.baseBpm} BPM</small>`;
+      const fp = (x) => Math.floor(x / 60) + ':' + String(Math.floor(x % 60)).padStart(2, '0');
+      const whole = !(e.rec.endSec > 0) || (e.rec.rangeStart || 0) < 0.5 && e.endSec >= e.rec.duration - 0.5;
+      row.innerHTML = `<span>${e.name}</span><small>${e.baseBpm} BPM · `
+        + (whole ? '整首' : `${fp(e.rec.rangeStart || 0)}–${fp(e.endSec)}`) + '</small>';
       const del = document.createElement('button');
       del.type = 'button'; del.className = 'link'; del.textContent = '删除';
       del.addEventListener('click', () => {
@@ -250,6 +253,10 @@
           return reloadUserBgms();
         });
       });
+      const ed = document.createElement('button');
+      ed.type = 'button'; ed.className = 'link'; ed.textContent = '编辑';
+      ed.addEventListener('click', () => editUserBgm(e.rec));
+      row.appendChild(ed);
       row.appendChild(del);
       box.appendChild(row);
     }
@@ -305,18 +312,11 @@
         .then((info) => ({ ab, info })))
       .then(({ ab, info }) => {
         hint.textContent = '';
-        pending = {
+        pending = pendingFrom(info, {
           id: MG.UserBgm.newId(),
           name: file.name.replace(/\.[^.]+$/, '').slice(0, 40) || '未命名',
           blob: new Blob([ab], { type: file.type || 'audio/mpeg' }),
-          duration: info.duration,
-          buffer: info.buffer,
-          env: info.env, envLow: info.envLow, fps: info.fps,
-          segments: info.segments, curve: info.curve,
-          bpm: round2(info.bpm),
-          from: info.rangeStart, to: info.rangeEnd,
-          anchor: info.startSec,          // 某一拍的绝对位置；网格以它为原点，调范围时拍点不动
-        };
+        });
         openConfirm();
       })
       .catch((e) => { hint.textContent = '读不了这个文件：' + e.message; });
@@ -417,6 +417,46 @@
       + `。已自动选最长的一段（${fmtPos(best.start)}–${fmtPos(best.end)}），点曲线上的其它段可以换，也可以自己拖范围。`;
   }
 
+  /* 分析结果 -> 确认面板的状态。saved 是已存的曲目（编辑时），用它的 BPM / 范围 / 拍点，
+     分析结果只拿来画速度曲线、列出各段 */
+  function pendingFrom(info, base, saved) {
+    const p = Object.assign({
+      duration: info.duration,
+      buffer: info.buffer,
+      env: info.env, envLow: info.envLow, fps: info.fps,
+      segments: info.segments, curve: info.curve,
+      bpm: round2(info.bpm),
+      from: info.rangeStart, to: info.rangeEnd,
+      anchor: info.startSec,          // 某一拍的绝对位置；网格以它为原点，调范围时拍点不动
+    }, base);
+    if (saved) {
+      p.bpm = round2(saved.bpm);
+      p.anchor = saved.startSec;
+      // 老存档没有范围：当整首。rangeStart 没存过的，起点取第一小节所在的那个位置
+      p.to = saved.endSec > saved.startSec ? Math.min(saved.endSec, p.duration) : p.duration;
+      p.from = saved.rangeStart !== undefined ? saved.rangeStart : Math.max(0, saved.startSec - 240 / saved.bpm + 0.001);
+      p.addedAt = saved.addedAt;
+    }
+    return p;
+  }
+
+  /* 编辑已保存的曲目：重新解码分析一遍（没存 PCM），带着原来的设置打开确认面板 */
+  function editUserBgm(rec) {
+    const hint = $('bgmUploadHint');
+    const ctx = audio.ensure();
+    if (!ctx) { hint.textContent = '音频未就绪，先点一下页面再试。'; return; }
+    audio.unlock().catch(() => {});
+    hint.textContent = '正在读取…';
+    readArrayBuffer(rec.blob)
+      .then((ab) => MG.UserBgm.analyze(ab, ctx, (t) => { hint.textContent = t; }))
+      .then((info) => {
+        hint.textContent = '';
+        pending = pendingFrom(info, { id: rec.id, name: rec.name, blob: rec.blob }, rec);
+        openConfirm();
+      })
+      .catch((e) => { hint.textContent = '打不开这首：' + e.message; });
+  }
+
   function openConfirm() {
     $('bgmcName').textContent = `${pending.name} · ${Math.round(pending.duration)} 秒`;
     $('bgmcSegHint').textContent = segHintText();
@@ -499,7 +539,8 @@
       bpm: round2(pending.bpm),
       startSec: Math.round((pending.from + offSec()) * 1000) / 1000,   // 截取范围里第一个小节的起点
       endSec: pending.to,
-      addedAt: Date.now(),
+      rangeStart: pending.from,           // 再次编辑时还原截取起点
+      addedAt: pending.addedAt || Date.now(),   // 编辑不改变排序
     };
     MG.UserBgm.save(rec)
       .then(() => reloadUserBgms())
@@ -655,7 +696,16 @@
     if (songBtn) {
       const nb = songBeats();
       songBtn.classList.toggle('hidden', ch || !nb);
-      if (nb) songBtn.textContent = `＝ 当前歌曲的长度（${nb} 拍）`;
+      if (nb) {
+        // 把算法摊开写：用的是哪一段、音乐按几倍速放、落到谱面上是多久
+        const g = MG.BGM_BY_ID[state.game.bgm];
+        const ratio = state.game.bgmAdaptive ? MG.bgmTempoRatio(state.bpm, g.baseBpm) : 1;
+        const rate = state.bpm / (g.baseBpm * ratio);
+        const fp = (x) => Math.floor(x / 60) + ':' + String(Math.round(x % 60)).padStart(2, '0');
+        const musicSec = g.loopBars * 240 / g.baseBpm;
+        songBtn.textContent = `＝ 整首歌：截取 ${fp(g.startSec)}–${fp(g.startSec + musicSec)}，`
+          + `按 ${rate.toFixed(2)} 倍速放 → 谱面 ${fp(nb * 60 / state.bpm)}（${nb} 拍）`;
+      }
     }
     if (!hint) return;
     if (ch) {
