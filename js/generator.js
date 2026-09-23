@@ -133,6 +133,7 @@
     bpm: 160,
     seed: 'demo',
     measures: 16,
+    beats: 0,                // 总拍数（>0 时优先于 measures，可以不是 4 的倍数；挑战模式不用）
     keys: 4,                 // 4 | 7
     restRatio: 0,            // 休息段比例（休息段只有 8 分音），默认不插入
     shiftAmount: 0.5,        // 交互位移幅度 0..1
@@ -175,7 +176,15 @@
     opts.freeSize = clamp(Math.round(+opts.freeSize || 6), 4, 10);
     // 无轨 / 点圈的列数不是用户选的，是音符大小定的
     if (opts.mode !== 'lane') opts.keys = freeCols(opts.freeSize);
-    if (opts.challenge) opts.measures = challengeMeasures(opts);
+    opts.beats = Math.round(+opts.beats || 0);
+    if (opts.challenge) {
+      opts.measures = challengeMeasures(opts);
+      opts.beats = 0;
+    } else if (opts.beats > 0) {
+      // 按拍数：够用的整小节照常生成，最后一小节只留到这一拍为止
+      opts.beats = clamp(opts.beats, 4, MAX_MEASURES * 4);
+      opts.measures = Math.max(2, Math.ceil(opts.beats / 4));
+    }
     if (opts.preset === 'mixed') {
       let pool = Array.isArray(opts.mixedPool) ? opts.mixedPool.filter(k => PRESETS[k] && PRESETS[k].group !== 'chaos') : null;
       opts.mixedPool = (pool && pool.length) ? pool : FANCY_KEYS.slice();
@@ -720,7 +729,10 @@
       if (isRest) breathe(ctx);
     }
 
-    const notes = ctx.notes;
+    let notes = ctx.notes;
+    // 拍数不是 4 的倍数：最后一小节截到指定拍，后面的音符不要
+    const endT = opts.beats > 0 ? tempo.beatTimes[opts.beats] : tempo.duration;
+    if (endT < tempo.duration) notes = ctx.notes = notes.filter(n => n.t < endT - 1e-6);
     notes.sort((a, b) => (a.t - b.t) || (a.col - b.col));
     for (let i = 0; i < notes.length; i++) notes[i].id = i;
     if (opts.mode === 'free') layoutFree(ctx, notes, opts);
@@ -728,7 +740,7 @@
 
     const chart = {
       notes, keys: K, bpm: opts.bpm, beat, measures: opts.measures,
-      duration: tempo.duration,
+      duration: endT, beats: opts.beats || opts.measures * 4,
       beatTimes: tempo.beatTimes, measureTime: tempo.measureTime, measureBpm: tempo.measureBpm,
       challenge: opts.challenge,
       bpmStart: opts.bpm,

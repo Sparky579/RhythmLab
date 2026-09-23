@@ -239,3 +239,9 @@ a.ghost {
 .meta { font-size: 12.5px; color: var(--muted); line-height: 1.7; }
 #resChart { width: 100%; height: 90px; border-radius: 8px; background: rgba(0,0,0,0.3); }
 .btns { display: flex; flex-direction: column; gap: 8px; margin-top: 4px; }
+
+/* 长度：时长 ⇄ 拍数 */
+.len-row #lenTime { width: 72px; text-align: center; }
+.len-row #lenBeats { width: 84px; }
+.len-row .len-eq { opacity: 0.6; }
+.len-row input:disabled { opacity: 0.5; }

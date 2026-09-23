@@ -464,6 +464,7 @@
         const mStart = ch.measureTime[m];
         const stepDur = (ch.measureTime[m + 1] - mStart) / spm;
         const t = mStart + this.bgmStep * stepDur;
+        if (t >= ch.duration - 1e-6) { this.bgmMeasure = ch.measures; return; }   // 按拍数截短的谱面
         if (t > horizon) return;
         const gs = m * spm + this.bgmStep;     // 全局步号，各轨按自己的长度循环
         const when = this.audioStart + this.countIn + t;
@@ -505,11 +506,14 @@
         const m = this.bgmMeasure;
         const t = ch.measureTime[m];
         if (t > horizon) return;
-        const measDur = ch.measureTime[m + 1] - t;
+        if (t >= ch.duration - 1e-6) { this.bgmMeasure = ch.measures; return; }
+        const fullDur = ch.measureTime[m + 1] - t;
+        // 按拍数截短时最后一段只放到谱面结束，速率仍按整小节算
+        const measDur = Math.min(fullDur, ch.duration - t);
         // 一个缓冲小节横跨 ratio 个谱面小节
         const barPos = (m / ratio) % loopBars;
         const offset = (this.bgmStart || 0) + barPos * barDur;
-        const rate = (barDur / ratio) / measDur;
+        const rate = (barDur / ratio) / fullDur;
         this.audio.playSlice(this.bgmBuf, this.audioStart + this.countIn + t, offset, measDur, rate, 1);
         this.bgmMeasure++;
       }

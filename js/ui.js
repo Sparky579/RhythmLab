@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '50';
+  const BUILD = '51';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -20,7 +20,10 @@
     mode: 'lane',           // 'lane' 4K/7K | 'free' 无轨 | 'circle' 点圈（后两者只能触屏打）
     freeSize: 6,            // 无轨 / 点圈的音符宽度 = 场地宽的 1/freeSize
     bpm: 160,
-    measures: 16,
+    measures: 16,           // 旧存档字段，只用来迁移成 beats
+    lenMode: 'beats',       // 'time' 改 BPM 时保持时长 | 'beats' 保持拍数
+    lenSec: 120,
+    beats: 64,
     seed: 'demo',
     restRatio: 0,
     challenge: false,
@@ -39,6 +42,8 @@
     try {
       const s = JSON.parse(localStorage.getItem(STORE_KEY) || 'null');
       if (s && typeof s === 'object') {
+        // 老存档只有小节数：换算成拍数，行为不变
+        if (s.beats === undefined && s.measures) { s.beats = s.measures * 4; s.lenMode = 'beats'; }
         Object.assign(state, s, { game: Object.assign({}, MG.GAME_DEFAULTS, s.game || {}) });
         // 老存档里留白还是 28px，而取消恰好密集发生在离屏幕边缘 40–80px 处，
         // 停在旧默认值上的一律抬到新默认值（自己调过的不动）
@@ -58,12 +63,35 @@
         ? 'rand_low'
         : (G.PRESET_KEYS.find(k => G.PRESETS[k].group === state.group) || 'trill_basic');
     }
+    if (state.lenMode !== 'time') state.lenMode = 'beats';
+    state.beats = clampBeats(state.beats);
+    state.lenSec = Math.max(1, Math.min(3600, +state.lenSec || 120));
     if (G.KEY_OPTIONS.indexOf(state.keys) < 0) state.keys = 4;
     if (state.mode !== 'free' && state.mode !== 'circle') state.mode = 'lane';
     state.freeSize = Math.max(4, Math.min(10, Math.round(+state.freeSize || 6)));
     // 这两种模式都要点到屏幕上的任意横坐标，键盘映射不了——非触屏设备不给选
     if (state.mode !== 'lane' && !isTouch()) state.mode = 'lane';
   }
+  /* ---------- 长度：时长 ⇄ 拍数 ---------- */
+  const MAX_BEATS = G.MAX_MEASURES * 4;
+  function clampBeats(v) { return Math.max(4, Math.min(MAX_BEATS, Math.round(+v || 64))); }
+  /* 实际生成用的拍数：按时长时由时长和 BPM 折算，取最近的整拍 */
+  function effBeats() {
+    return state.lenMode === 'time' ? clampBeats(state.lenSec * state.bpm / 60) : clampBeats(state.beats);
+  }
+  function fmtTime(sec) {
+    const s = Math.round(sec);
+    return Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }
+  /* 「2:00」「2:5」「90」（纯数字按秒）都认；认不出返回 NaN */
+  function parseTime(str) {
+    const t = String(str || '').trim().replace('：', ':');
+    let m = /^(\d+):(\d{1,2})$/.exec(t);
+    if (m) return +m[1] * 60 + +m[2];
+    m = /^(\d+(?:\.\d+)?)$/.exec(t);
+    return m ? Math.round(+m[1]) : NaN;
+  }
+
   function saveState() {
     try { localStorage.setItem(STORE_KEY, JSON.stringify(state)); } catch (e) { /* ignore */ }
   }
@@ -454,8 +482,7 @@
 
     const ch = state.challenge;
     $('optChallenge').classList.toggle('hidden', !ch);
-    $('measures').disabled = ch;          // 挑战模式的小节数由爬升区间推出来
-    setMeasuresDisplay(ch);
+    syncLen();
     const bpmLabel = $('bpmOut').parentElement;
     if (bpmLabel) bpmLabel.firstChild.nodeValue = ch ? '起始 BPM ' : 'BPM ';
   }
@@ -476,23 +503,37 @@
       + (zero ? '0% 就是全程零位移，乐句之间也不再重抽位置。' : '');
   }
 
-  /* 挑战模式下小节数是算出来的，用一个临时选项把真实值显示出来 */
-  function setMeasuresDisplay(auto) {
-    const sel = $('measures');
-    if (!sel) return;
-    let opt = sel.querySelector('option[value="auto"]');
-    if (auto) {
-      const n = G.challengeMeasures(G.normalizeOpts(genOpts()));
-      if (!opt) {
-        opt = document.createElement('option');
-        opt.value = 'auto';
-        sel.appendChild(opt);
-      }
-      opt.textContent = n + ' 小节（自动）';
-      sel.value = 'auto';
+  /* 长度两栏互相跟随：正在编辑的那栏不去覆盖，免得打字时被改掉。
+     挑战模式的长度由爬升区间推出来，两栏只显示、不能改 */
+  function syncLen() {
+    const tEl = $('lenTime'), bEl = $('lenBeats'), hint = $('lenHint');
+    if (!tEl) return;
+    const ch = state.challenge;
+    tEl.disabled = bEl.disabled = ch;
+    document.querySelectorAll('#lenMode button').forEach(b => { b.disabled = ch; });
+    setSeg('lenMode', state.lenMode);
+    let beats, sec;
+    if (ch) {
+      const o = G.normalizeOpts(genOpts());
+      beats = o.measures * 4;
+      sec = chart && chart.challenge ? chart.duration : NaN;
     } else {
-      if (opt) opt.remove();
-      sel.value = String(state.measures);
+      beats = effBeats();
+      sec = beats * 60 / state.bpm;
+    }
+    const focus = document.activeElement;
+    if (focus !== tEl) tEl.value = !ch && state.lenMode === 'time' ? fmtTime(state.lenSec) : (isNaN(sec) ? '' : fmtTime(sec));
+    if (focus !== bEl) bEl.value = beats;
+    if (!hint) return;
+    if (ch) {
+      hint.textContent = '挑战模式的长度由爬升区间决定。';
+    } else {
+      const exact = beats * 60 / state.bpm;
+      hint.textContent = (state.lenMode === 'time'
+        ? `改 BPM 时保持时长，拍数跟着变。${state.bpm} BPM 下 ${beats} 拍`
+          + (Math.abs(exact - state.lenSec) >= 0.05 ? `，实际 ${exact.toFixed(1)} 秒` : '')
+        : `改 BPM 时保持拍数，时长跟着变。${state.bpm} BPM 下约 ${exact.toFixed(1)} 秒`)
+        + (beats % 4 ? `（${Math.floor(beats / 4)} 小节又 ${beats % 4} 拍）。` : `（${beats / 4} 小节）。`);
     }
   }
 
@@ -559,7 +600,7 @@
     return {
       preset: state.preset, keys: state.keys, bpm: state.bpm, seed: state.seed,
       mode: state.mode, freeSize: state.freeSize,
-      measures: state.measures, restRatio: state.restRatio,
+      beats: effBeats(), restRatio: state.restRatio,
       challenge: state.challenge, bpmEnd: state.bpmEnd,
       rampMeasures: state.rampMeasures, rampStep: state.rampStep,
       shiftAmount: state.shiftAmount, axisHand: state.axisHand, axisStyle: state.axisStyle,
@@ -589,7 +630,7 @@
           : `<span>16 分间隔</span><b>${rowMs} ms</b>`) +
         `<span>种子码</span><b>${chart.seedHash.toString(16)}</b>`;
       $('warnings').textContent = chart.warnings.join('；');
-      if (state.challenge) setMeasuresDisplay(true);
+      syncLen();
       const endBpm = chart.challenge ? chart.bpmEnd : state.bpm;
       $('bpmHint').textContent = chart.challenge
         ? `起步每秒 ${(state.bpm / 60 * 4).toFixed(1)} 行，冲到 ${endBpm} 时每秒 ${(endBpm / 60 * 4).toFixed(1)} 行。`
@@ -930,11 +971,24 @@
       refresh(); syncBgmHint();
     });
 
-    $('measures').value = state.measures;
-    $('measures').addEventListener('change', (e) => {
-      if (e.target.value === 'auto') return;
-      state.measures = +e.target.value; refresh();
+    bindSeg('lenMode', v => {
+      // 切换时以当前实际值为准，另一栏数值不跳
+      if (v === 'beats') state.beats = effBeats();
+      else state.lenSec = effBeats() * 60 / state.bpm;   // 不取整，否则 130 拍会变成 129
+      state.lenMode = v; syncLen(); refresh();
     });
+    // 输入过程中实时联动另一栏；失焦时再把自己规整一遍
+    $('lenTime').addEventListener('input', (e) => {
+      const v = parseTime(e.target.value);
+      if (!(v > 0)) return;
+      state.lenSec = Math.min(3600, v); state.lenMode = 'time'; syncLen(); refresh();
+    });
+    $('lenTime').addEventListener('change', () => syncLen());
+    $('lenBeats').addEventListener('input', (e) => {
+      if (!(+e.target.value >= 1)) return;
+      state.beats = clampBeats(e.target.value); state.lenMode = 'beats'; syncLen(); refresh();
+    });
+    $('lenBeats').addEventListener('change', () => syncLen());
     if ($('challenge')) {
       $('challenge').checked = !!state.challenge;
       $('challenge').addEventListener('change', (e) => {
