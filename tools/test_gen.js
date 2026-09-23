@@ -1,7 +1,7 @@
 /* 生成器自检：全预设 × BPM × 键数 × 种子
  * 覆盖可复现性、各类硬约束、押海的押数、无轨坐标。
  */
-const G = require('/home/chengsizhe/codes/MusicGames/js/generator.js').Generator;
+const G = require('../js/generator.js').Generator;
 
 const BPMS = [120, 160, 200, 240], SEEDS = ['a', 'b', 'c'];
 let total = 0, warnTotal = 0, fails = 0;

@@ -1,7 +1,7 @@
 /* 测速自检：用合成的节拍信号验证 onsetEnvelope + detectTempo */
 global.window = global;
 global.indexedDB = { open() { return {}; } };
-require('/home/chengsizhe/codes/MusicGames/js/bgmuser.js');
+require('../js/bgmuser.js');
 const U = global.MG.UserBgm;
 
 const SR = 11025;

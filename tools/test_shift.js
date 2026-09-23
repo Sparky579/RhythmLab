@@ -2,7 +2,7 @@
  * 要求：位移幅度 0 = 全程一点位移都没有 —— 交互类整首只落在起手的那两条轨上，
  * 纵连整首钉在同一条轨上。幅度调大，用到的轨数必须跟着变多。
  */
-const G = require('/home/chengsizhe/codes/MusicGames/js/generator.js').Generator;
+const G = require('../js/generator.js').Generator;
 
 const TRILL = ['trill_basic', 'trill_shift4', 'trill_shift3', 'trill_axis', 'trill_converge'];
 const SEEDS = ['demo', 'a1', 'zz9', 'k3m', 'q7'];
