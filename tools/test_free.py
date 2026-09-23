@@ -46,7 +46,7 @@ async def run_once(pg, offset_px, label):
         P: +document.getElementById('resP').textContent,
         G: +document.getElementById('resG').textContent,
         M: +document.getElementById('resM').textContent,
-        打空: MG.game.emptyTaps, 击打: MG.game.taps })""")
+        总数: MG.game.chart.notes.length })""")
     out['用例'] = label
     out['派发'] = res['taps']
     await pg.click('#btnBack')
@@ -94,12 +94,14 @@ async def main():
 
         for r in rows: print(json.dumps(r, ensure_ascii=False))
         good, bad = rows[0], rows[1]
-        if good['M'] > good['P'] * 0.02:
-            fails.append('点准了还 miss %d 个' % good['M'])
-        if good['打空'] > 2:
-            fails.append('点准了却打空 %d 次' % good['打空'])
-        if bad['打空'] < bad['击打'] * 0.95:
-            fails.append('点偏了仍被判中：打空 %d / 击打 %d' % (bad['打空'], bad['击打']))
+        # 点准：派发多少下就该中多少下，一个不漏
+        if good['P'] != good['总数'] or good['M']:
+            fails.append('点准了却没全中：P %d / 共 %d / miss %d'
+                         % (good['P'], good['总数'], good['M']))
+        # 点偏一个直径：一下都不该判中
+        if bad['P'] or bad['G'] or bad['M'] != bad['总数']:
+            fails.append('点偏了仍被判中：P %d G %d miss %d / 共 %d'
+                         % (bad['P'], bad['G'], bad['M'], bad['总数']))
         print('页面错误', errs)
         if errs: fails.append('页面报错 %s' % errs)
         await b.close()

@@ -54,8 +54,6 @@ public class MainActivity extends Activity {
     private ValueCallback<Uri[]> filePicker;
 
     private float density = 2f;
-    private boolean exclusionOk = false;
-    private String exclusionNote = "-";
     private final SparseFloats lastSentX = new SparseFloats();
 
     @Override
@@ -69,8 +67,7 @@ public class MainActivity extends Activity {
         st.setJavaScriptEnabled(true);
         st.setDomStorageEnabled(true);
         st.setMediaPlaybackRequiresUserGesture(false);
-        // UA 打个标记：页面据此知道自己跑在原生壳里，桥没注入上时也能把问题显出来
-        web.addJavascriptInterface(new Shell(), "RLShell");
+        // UA 打个标记：页面据此知道自己跑在原生壳里（也用来判断壳的能力版本）
         st.setUserAgentString(st.getUserAgentString() + " RhythmLabShell/4");
         st.setSupportZoom(false);
         st.setBuiltInZoomControls(false);
@@ -139,10 +136,7 @@ public class MainActivity extends Activity {
         View decor = getWindow().getDecorView();
         decor.setOnSystemUiVisibilityChangeListener(new View.OnSystemUiVisibilityChangeListener() {
             @Override public void onSystemUiVisibilityChange(int visibility) {
-                // 沉浸式下边缘触摸会让系统栏临时探头，这一下就会取消整串触摸。
-                // 数一下它发生了多少次，好和 touchcancel 对上。
-                sysUiChanges++;
-                lastSysUiAt = SystemClock.uptimeMillis();
+                // 沉浸式下边缘触摸会让系统栏临时探头，探完立刻缩回去
                 applyImmersive();
             }
         });
@@ -214,64 +208,10 @@ public class MainActivity extends Activity {
             rects.add(new Rect(Math.max(0, w - band), top, w, h));
             Method m = View.class.getMethod("setSystemGestureExclusionRects", List.class);
             m.invoke(web, rects);
-            exclusionOk = true;
-            exclusionNote = band + "x" + (h - top) + "px";
-        } catch (Throwable t) {
-            exclusionOk = false;
-            exclusionNote = t.getClass().getSimpleName();
+        } catch (Throwable ignored) {
+            // 低版本没有这个方法；那些系统也没有边缘返回手势，本来就不需要
         }
-        reportShellState();
-    }
-
-    /** 原生层收到的动作计数。页面看到的 touchcancel 如果在这里没有对应的
-     *  ACTION_CANCEL，说明取消是 WebView 自己造出来的，不是安卓发的。 */
-    private int nDown, nMove, nUp, nCancel, nMaxPointers, nCancelNearSysUi;
-    private long lastNativeAt, maxNativeGap;
-
-    private void countNative(int action, MotionEvent ev) {
-        long now = SystemClock.uptimeMillis();
-        if (lastNativeAt != 0 && now - lastNativeAt > maxNativeGap) maxNativeGap = now - lastNativeAt;
-        lastNativeAt = now;
-        if (ev.getPointerCount() > nMaxPointers) nMaxPointers = ev.getPointerCount();
-        switch (action) {
-            case MotionEvent.ACTION_DOWN:
-            case MotionEvent.ACTION_POINTER_DOWN: nDown++; break;
-            case MotionEvent.ACTION_MOVE: nMove++; break;
-            case MotionEvent.ACTION_UP:
-            case MotionEvent.ACTION_POINTER_UP: nUp++; break;
-            case MotionEvent.ACTION_CANCEL:
-                nCancel++;
-                // 取消发生时，距上一次系统栏可见性变化多久：贴得越近越说明是它
-                if (lastSysUiAt != 0) {
-                    long d = now - lastSysUiAt;
-                    if (d < 300) nCancelNearSysUi++;
-                }
-                break;
-            default: break;
-        }
-    }
-
-    /** 只读的测量接口：页面在生成诊断时取一次，没有逐事件开销。 */
-    public final class Shell {
-        @android.webkit.JavascriptInterface
-        public String stats() {
-            return "{\"down\":" + nDown + ",\"move\":" + nMove + ",\"up\":" + nUp
-                    + ",\"cancel\":" + nCancel + ",\"maxPointers\":" + nMaxPointers
-                    + ",\"maxGap\":" + maxNativeGap
-                    + ",\"sysUi\":" + sysUiChanges
-                    + ",\"cancelNearSysUi\":" + nCancelNearSysUi
-                    + ",\"evalCalls\":" + evalCalls
-                    + ",\"maxDispatchUs\":" + maxDispatchUs
-                    + ",\"avgDispatchUs\":" + (dispatchCount > 0 ? dispatchTotalUs / dispatchCount : 0)
-                    + "}";
-        }
-        @android.webkit.JavascriptInterface
-        public void reset() {
-            nDown = nMove = nUp = nCancel = nMaxPointers = nCancelNearSysUi = 0;
-            sysUiChanges = 0; lastSysUiAt = 0;
-            maxNativeGap = 0; lastNativeAt = 0;
-            evalCalls = 0; maxDispatchUs = 0; dispatchTotalUs = 0; dispatchCount = 0;
-        }
+        reportGestureInsets();
     }
 
     /** 系统自己声明的手势区有多宽（API 29+）。排除区没盖住它就会被接管。 */
@@ -288,13 +228,11 @@ public class MainActivity extends Activity {
         }
     }
 
-    /** 把外壳自己的状态喂给页面，好让诊断里能看见排除区到底有没有生效。 */
-    private void reportShellState() {
+    /** 把系统声明的手势区宽度喂给页面：轨道留白要躲开这条带，得按真值来，不能靠猜。 */
+    private void reportGestureInsets() {
         if (web == null) return;
         int[] g = gestureInsets();
-        final String js = "window.__shell=" + "{ok:" + exclusionOk
-                + ",band:'" + exclusionNote + "'"
-                + ",dpr:" + density
+        final String js = "window.__shell={dpr:" + density
                 + ",gl:" + g[0] + ",gr:" + g[1] + ",gb:" + g[2] + "};";
         web.post(new Runnable() { public void run() {
             try { web.evaluateJavascript(js, null); } catch (Throwable ignored) { }
@@ -304,26 +242,13 @@ public class MainActivity extends Activity {
     /** 原生触摸直采：不消费，只是抢先把每一个按下/抬起/移动转发给 JS。 */
     @Override
     public boolean dispatchTouchEvent(MotionEvent ev) {
-        final long t0 = System.nanoTime();
         try { forward(ev); } catch (Throwable ignored) { }
-        boolean r = super.dispatchTouchEvent(ev);
-        // 派发这一步花了多久：慢的就是它拖住了 finishInputEvent
-        long us = (System.nanoTime() - t0) / 1000;
-        dispatchTotalUs += us;
-        if (us > maxDispatchUs) maxDispatchUs = us;
-        dispatchCount++;
-        return r;
+        return super.dispatchTouchEvent(ev);
     }
-
-    private long maxDispatchUs, dispatchTotalUs;
-    private int dispatchCount;
-    private int sysUiChanges;
-    private long lastSysUiAt;
 
     private void forward(MotionEvent ev) {
         if (web == null) return;
         final int action = ev.getActionMasked();
-        countNative(action, ev);
         // 事件已经排队了多久：JS 端用 performance.now() - age 还原真实时刻
         final float age = SystemClock.uptimeMillis() - ev.getEventTime();
 
@@ -367,7 +292,6 @@ public class MainActivity extends Activity {
     private final StringBuilder batch = new StringBuilder(512);
     private int batchCount;
     private boolean flushScheduled;
-    private int evalCalls;
 
     private final Runnable flush = new Runnable() {
         public void run() {
@@ -376,7 +300,6 @@ public class MainActivity extends Activity {
             final String js = "window.MG&&MG.nativeBatch&&MG.nativeBatch(\"" + batch + "\")";
             batch.setLength(0);
             batchCount = 0;
-            evalCalls++;
             try { web.evaluateJavascript(js, null); } catch (Throwable ignored) { }
         }
     };

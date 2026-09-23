@@ -3,7 +3,7 @@
   'use strict';
   const G = MG.Generator;
   const $ = (id) => document.getElementById(id);
-  const BUILD = '47';
+  const BUILD = '48';
   MG.BUILD = BUILD;                 // 供页面末尾的版本自检使用
   /* 版本号直接印在标题下面：装没装上新版一眼就能看出来 */
   document.addEventListener('DOMContentLoaded', () => {
@@ -687,8 +687,6 @@
   /* ---------- 开始 / 结果 ---------- */
   async function startGame() {
     if (!chart) chart = G.generate(genOpts());
-    // 原生层计数按局清零，诊断里的数字才和本局对得上
-    try { if (window.RLShell && RLShell.reset) RLShell.reset(); } catch (e) { /* ignore */ }
     // 个别浏览器的 AudioContext.resume() 可能永不 resolve，超时后照常开始
     await Promise.race([
       audio.unlock().catch(() => {}),
@@ -764,22 +762,8 @@
       `<br>平均偏差 <b>${mean >= 0 ? '+' : ''}${mean.toFixed(1)} ms</b>（${mean >= 0 ? '偏晚' : '偏早'}）· 标准差 ${res.stdOffset.toFixed(1)} ms` +
       `<br>提前 ${res.early} · 延后 ${res.late} · 判定 ${res.perfectMs}/${res.greatMs} ms` +
       (res.autoplay ? '<br>自动演奏' : '') +
-      (state.game.inputDebug ? `<br>种子码 ${res.chart.seedHash.toString(16)}` + inputLine(res) : '') +
       calibLine(res) +
       challengeLine(res);
-    // 「复制诊断数据」和种子码都是排查用的，不开输入诊断时结束页只剩成绩本身
-    const dg = $('btnDiag');
-    if (dg) dg.classList.toggle('hidden', !state.game.inputDebug);
-    // 剪贴板不可用时退回的那个文本框会一直留在卡片里，换一局也不清——顺手收掉
-    const stale = $('diagBox');
-    if (stale && !state.game.inputDebug) stale.remove();
-    if (dg) dg.onclick = () => {
-      const txt = diagText(res);
-      const done = () => { dg.textContent = '已复制，直接粘贴发出即可'; };
-      if (navigator.clipboard && navigator.clipboard.writeText) {
-        navigator.clipboard.writeText(txt).then(done, () => showDiagBox(txt));
-      } else showDiagBox(txt);
-    };
     const cb = $('btnCalib');
     if (cb) cb.addEventListener('click', () => {
       const want = res.suggestOffset;
@@ -791,41 +775,6 @@
       cb.outerHTML = `<span style="color:#5ee8b0">判定偏移已设为 ${want} ms</span>`;
     });
     drawResultChart(res);
-  }
-  /* 输入诊断：命中数一定不会多于输入次数，否则就是触摸事件没送到页面 */
-  function inputLine(res) {
-    const hits = res.counts[0] + res.counts[1];
-    let line = `<br>击打输入 <b>${res.taps}</b> 次 · 命中 ${hits} · 打空 ${res.emptyTaps}`;
-    if (res.assistHits) line += ` · 边缘容错救回 ${res.assistHits}`;
-    const gaps = res.rawGaps || [];
-    if (gaps.length) {
-      const total = (gaps.reduce((a, x) => a + x[1], 0) / 1000).toFixed(1);
-      const worst = Math.max.apply(null, gaps.map((x) => x[1]));
-      line += `<br><span style="color:#ffb86b">本局有 ${gaps.length} 段收不到触摸，`
-        + `共 ${total} 秒（最长 ${worst}ms）</span>`;
-    }
-    return line + diagLines(res);
-  }
-
-  /* 排查用的详细指标，只在打开「输入诊断」时出现 */
-  function diagLines(res) {
-    const out = [];
-    const r = res.raw || {};
-    out.push(`原始事件 按下${r.ts || 0} 移动${r.tm || 0} 抬起${r.te || 0} 取消${r.tc || 0}`
-      + ` 被过滤${r.skipped || 0}`);
-    if ((res.rawGaps || []).length) {
-      out.push('断流前因 ' + res.rawGaps.map((x) =>
-        `${x[1]}ms(${RAW_NAME[x[2]] || '?'}后,${x[3] === undefined ? '?' : x[3]}指)`).join(' '));
-    }
-    if ((res.cancelSpots || []).length) out.push('取消离边缘 ' + res.cancelSpots.join('/') + 'px');
-    if ((res.stalls || []).length) {
-      out.push(`卡顿${res.stalls.length}次 最长${res.maxGap}ms`
-        + `（我的代码${res.maxFrameDur}ms / 之外${res.maxOutside}ms）`
-        + ` 连续掉帧${(res.worstRunMs / 1000).toFixed(1)}s`);
-    }
-    if (res.tsAnomalies) out.push(`时间戳异常 ${res.tsAnomalies} 次`);
-    out.push(`视口${res.resizeCount}次 画布重建${res.canvasAllocs}次 dpr${res.dpr}`);
-    return '<br><span style="color:var(--muted);font-size:11.5px">' + out.join('<br>') + '</span>';
   }
   /* 挑战摘要：准确率跌破阈值前守住的最高 BPM，一眼看出在哪一档崩 */
   function challengeLine(res) {
@@ -851,77 +800,6 @@
     const cur = state.game.offsetMs, want = res.suggestOffset, delta = want - cur;
     if (Math.abs(delta) < 8) return '<br>判定偏移已经对准，无需调整。';
     return `<br><button type="button" id="btnCalib" class="link">校准判定偏移到 ${want} ms</button>`;
-  }
-
-  /* 把本局所有诊断数字拼成一段纯文本，方便直接发出来，不用人工抄 */
-  const RAW_NAME = { ts: '按下', tm: '移动', te: '抬起', tc: '取消', pd: '指针' };
-
-  /* 原生层（Activity 的 MotionEvent）自己数到的动作。
-     页面看到 touchcancel、这里的 cancel 却是 0，就说明取消是 WebView 造的。 */
-  function nativeStats() {
-    try {
-      if (!(window.RLShell && RLShell.stats)) return '未启用';
-      const n = JSON.parse(RLShell.stats());
-      return `按下${n.down} 移动${n.move} 抬起${n.up} 取消${n.cancel}`
-        + ` 最多${n.maxPointers}指 最长空档${n.maxGap}ms`
-        + ` 派发耗时 平均${n.avgDispatchUs}us/最长${n.maxDispatchUs}us`
-        + ` JS调用${n.evalCalls}次`
-        + ` 系统栏变化${n.sysUi}次 取消紧跟其后${n.cancelNearSysUi}次`;
-    } catch (e) { return '读取失败'; }
-  }
-
-  function diagText(res) {
-    const c = res.chart, r = res.raw || {};
-    const h = res.frameHist || [];
-    return [
-      `RhythmLab 诊断 v${BUILD}`,
-      `谱面 ${c.presetName} ${c.keys}K ${c.bpm}BPM 音符${res.total} 时长${Math.round(c.duration)}s`,
-      `判定 ${res.perfectMs}/${res.greatMs}ms 偏移${state.game.offsetMs}ms 余量${state.game.laneSlackPx}px`,
-      `画质 dpr上限${state.game.maxDpr} 实际${res.dpr}${res.autoDprCap ? '(自动降档)' : ''} 极简${state.game.minimalFx ? '开' : '关'} 低延迟画布${res.lowLatency ? '开' : '关'}`,
-      `音频 BGM=${state.game.bgm} 打击音${state.game.hitSound ? '开' : '关'}`,
-      `成绩 P${res.counts[0]} G${res.counts[1]} M${res.counts[2]} 连击${res.maxCombo}`,
-      `输入 触摸${res.taps} 命中${res.counts[0] + res.counts[1]} 打空${res.emptyTaps} 容错救回${res.assistHits} 暂停丢弃${res.stateDrops}`,
-      `原始事件 按下${r.ts || 0} 移动${r.tm || 0} 抬起${r.te || 0} 取消${r.tc || 0} 指针${r.pd || 0} 被过滤${r.skipped || 0} 最多${res.maxFingers || 0}指`,
-      `原始空档 ${(res.rawGaps || []).map((x) =>
-        x[1] + 'ms(' + (RAW_NAME[x[2]] || '?') + '后,' + (x[3] === undefined ? '?' : x[3]) + '指)'
-      ).join(' ') || '无'}`,
-      `取消位置 ${(res.cancelSpots || []).map((x) => x + 'px').join(' ') || '无'}（离最近的左右边缘）`,
-      `视觉视口 事件${res.vvEvents} 最大缩放${(res.vvScaleMax || 1).toFixed(2)}`,
-      `取消时 ${(res.cancelCtx || []).map((c) =>
-        `距视口变化${c.r < 0 ? '-' : c.r + 'ms'}/焦点${c.f}/可见${c.v}/剩${c.n}指`).join(' ') || '无'}`,
-      `输入空档 ${(res.inputGaps || []).map((x) => x.ms + 'ms').join(' ') || '无'}`,
-      `帧 卡顿${(res.stalls || []).length}次 最长${res.maxGap || 0}ms 我的代码${res.maxFrameDur}ms 代码之外${res.maxOutside}ms`,
-      `连续掉帧 ${(res.worstRunMs / 1000).toFixed(1)}s/${res.worstRunFrames}帧 分布 ${h.join('/')}`,
-      `送显滞后 ${(res.presentStalls || []).length}次 最长${res.maxRafLag}ms`,
-      `视口 ${res.resizeCount}次 画布重建${res.canvasAllocs}次 时钟偏移${res.clockDelta === null ? '-' : Math.round(res.clockDelta)}ms 时间戳异常${res.tsAnomalies}`,
-      `轨道 ${res.layout
-        ? `屏宽${res.layout.w}px 轨宽${res.layout.laneW}px 起点${res.layout.x0}px`
-          + ` 手势区${res.layout.gesture >= 0 ? res.layout.gesture + 'px' : '未知'}`
-        : '未记录'}`,
-      `全屏变化 ${res.fsChanges}次   取消紧跟全屏变化 ${res.cancelNearFs}次`,
-      `原生层动作 ${nativeStats()}`,
-      `原生壳 ${window.__shell
-        ? `手势排除${__shell.ok ? '已生效 ' + __shell.band : '失败(' + __shell.band + ')'}`
-          + ` 系统手势区 左${__shell.gl}/右${__shell.gr}/下${__shell.gb}px(设备像素)`
-          + ` 密度${__shell.dpr}`
-        : '未启用'}`,
-      `环境 ${navigator.userAgent}`,
-    ].join('\n');
-  }
-
-  /* 剪贴板不可用时，退回到一个可全选的文本框 */
-  function showDiagBox(txt) {
-    let box = $('diagBox');
-    if (!box) {
-      box = document.createElement('textarea');
-      box.id = 'diagBox';
-      box.readOnly = true;
-      box.style.cssText = 'width:100%;height:120px;margin-top:8px;background:rgba(0,0,0,.35);'
-        + 'color:var(--text);border:1px solid var(--panel-border);border-radius:8px;padding:8px;font-size:11px';
-      $('resMeta').parentElement.insertBefore(box, $('resChart'));
-    }
-    box.value = txt;
-    box.select();
   }
 
   function drawResultChart(res) {
@@ -1086,7 +964,7 @@
       });
     }
 
-    for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoFullscreen', 'minimalFx', 'inputDebug']) {
+    for (const id of ['metroOverlay', 'hitSound', 'handColors', 'showErrorBar', 'missOnEmpty', 'autoplay', 'autoFullscreen', 'minimalFx']) {
       if (!$(id)) continue;
       $(id).checked = !!state.game[id];
       $(id).addEventListener('change', (e) => {

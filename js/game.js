@@ -10,8 +10,6 @@
   const JUDGE_NAMES = ['PERFECT', 'GREAT', 'MISS'];
   const JUDGE_COLORS = ['#ffd75e', '#5ee8b0', '#ff5c7a'];
   const JUDGE_WEIGHT = [1, 0.5, 0];
-  /* 原始事件种类的中文名，断流前因显示用 */
-  const RAW_NAME = { ts: '按下', tm: '移动', te: '抬起', tc: '取消', pd: '指针' };
   const HAND_COLORS = ['#4fc8ff', '#ff6fae'];
   const THUMB_COLOR = '#b58cff';
   const NEUTRAL_COLOR = '#c9d4ff';
@@ -41,7 +39,6 @@
     showErrorBar: true,
     laneSlackPx: 12,     // 轨道判定余量：落点越过轨道边线这么多像素内仍算这一轨
     minimalFx: false,    // 极简画面：去掉拍线、按下高亮、打击特效，只留音符与判定线
-    inputDebug: false,   // 画面左上角实时显示输入统计，用来排查断触
     // 渲染分辨率上限。手机屏幕常到 3 倍密度，一帧要填的像素量是主要开销，
     // 而且这部分发生在合成线程（也就是诊断里「我的代码之外」那一项）。
     maxDpr: (typeof matchMedia !== 'undefined' && matchMedia('(pointer: coarse)').matches) ? 1.5 : 2,
@@ -84,10 +81,8 @@
       this.clockDelta = null;     // event.timeStamp -> performance.now() 的偏移
       this.nativeMode = false;    // 原生壳直采触摸时为 true
       this.lastNativeAt = 0;
-      this.nativeSeen = 0;
       this.rectAt = 0;
-      this.taps = 0; this.emptyTaps = 0; this.assistHits = 0;
-      this.tsAnomalies = 0; this.stateDrops = 0; this.lastDt = null;
+      this.lastDt = null;
       this.lastJudge = { kind: -1, t0: -1, dt: 0 };
       this.raf = 0;
       this._bind();
@@ -111,8 +106,6 @@
       if (!r.width || !r.height) return;
       this.rect = r;
       this.rectAt = performance.now();
-      this.resizeCount = (this.resizeCount || 0) + 1;
-      this.lastResizeAt = performance.now();   // 取消若紧跟视口变化，那是我自己引起的
       this._gradCache = null;   // 尺寸变了，缓存的渐变作废
       const cap = Math.max(1, +this.settings.maxDpr || 2);
       const dpr = Math.min(window.devicePixelRatio || 1, cap, this.autoDprCap || 99);
@@ -126,8 +119,7 @@
         || Math.abs(ph - c.height) / c.height > 0.10;
       if (big) {
         c.width = pw; c.height = ph;
-        this.canvasAllocs = (this.canvasAllocs || 0) + 1;
-      }
+        }
       // 变换按「后备缓冲 ÷ CSS 尺寸」算：小幅变化时直接拉伸复用，肉眼看不出来
       this.ctx2d.setTransform(c.width / r.width, 0, 0, c.height / r.height, 0, 0);
 
@@ -140,7 +132,6 @@
         const gCss = Math.max(sh.gl, sh.gr) / (this.dpr || 1);
         margin = Math.max(margin, Math.min(this.W * 0.2, gCss + 10));
       }
-      this.edgeGestureCss = sh && sh.gl >= 0 ? Math.round(Math.max(sh.gl, sh.gr) / (this.dpr || 1)) : -1;
       const avail = Math.max(60, this.W - margin * 2);
       // 轨道铺满留白之间的整块宽度。以前上限写死 140/100，4K 只占屏幕中间一小条，
       // 手指自然摊开就会落到轨道区之外的屏幕最边缘 —— 那里正是系统手势区。
@@ -177,88 +168,6 @@
 
     /* ---------- 输入绑定 ---------- */
     _bind() {
-      // 在 window 捕获阶段只做计数，不做任何处理。这是判断「事件到底有没有来」
-      // 的唯一可靠手段：它早于我自己的监听器，也不受 skip() 过滤影响。
-      this.raw = { ts: 0, tm: 0, te: 0, tc: 0, pd: 0, skipped: 0 };
-      this.lastRawAt = 0;
-      this.rawGaps = [];
-      this.rawLastType = '-';
-      this.fingersAtLast = 0;
-      this.cancelSpots = [];   // 每次 touchcancel 时，被取消的手指离左右边缘最近多少 px
-      this.cancelCtx = [];     // 取消当时的上下文：距上次视口变化、是否有焦点、剩几指
-      // 浏览器自己在做双指缩放时也会发 touchcancel，并在手势期间停止派发触摸。
-      // 真缩放会动到 visualViewport，系统手势不会 —— 用它把两者分开。
-      this.vvEvents = 0;
-      this.vvScaleMax = 1;
-      // 全屏进出会让系统栏动一下，边缘触摸在沉浸式下最容易触发它
-      this.fsChanges = 0;
-      this.lastFsAt = 0;
-      this.cancelNearFs = 0;
-      const onFs = () => { this.fsChanges++; this.lastFsAt = performance.now(); };
-      document.addEventListener('fullscreenchange', onFs);
-      document.addEventListener('webkitfullscreenchange', onFs);
-      const vv = window.visualViewport;
-      if (vv) {
-        const note = () => {
-          if (this.state !== 'playing') return;
-          this.vvEvents++;
-          if (vv.scale > this.vvScaleMax) this.vvScaleMax = vv.scale;
-        };
-        vv.addEventListener('resize', note);
-        vv.addEventListener('scroll', note);
-      }
-      this.rawTimes = new Float64Array(256);   // 最近若干次原始事件的时刻，用来算实时速率
-      this.rawN = 0;
-      this.maxFingers = 0;
-      const count = (k) => (e) => {
-        const now = performance.now();
-        // 上一次原始事件到现在的空档：>700ms 记一笔。
-        // 这是「浏览器压根没派发事件」的直接证据，与渲染、判定都无关。
-        if (this.lastRawAt && this.state === 'playing' && now - this.lastRawAt > 700) {
-          // 连断流「发生前一刻」的状态一起记：最后一个事件是什么、当时几根手指还在屏上。
-          // 断流前总是 touchcancel，就是系统把这串触摸抢走了；
-          // 断流前是 touchstart 且手指数不为 0，那是按着按着事件就没了。
-          this.rawGaps.push([Math.round(this.chartTime(now) * 1000), Math.round(now - this.lastRawAt),
-                             this.rawLastType, this.fingersAtLast]);
-          if (this.rawGaps.length > 40) this.rawGaps.shift();
-        }
-        if (k === 'tc' && e.changedTouches && this.W > 0) {
-          let near = Infinity;
-          for (let i = 0; i < e.changedTouches.length; i++) {
-            const x = e.changedTouches[i].clientX;
-            near = Math.min(near, x, this.W - x);
-          }
-          if (this.lastFsAt && now - this.lastFsAt < 300) this.cancelNearFs++;
-          if (isFinite(near)) {
-            this.cancelSpots.push(Math.round(near));
-            if (this.cancelSpots.length > 40) this.cancelSpots.shift();
-          }
-          // 取消紧跟在视口变化 / 失焦之后，说明是全屏切换、地址栏收放这类
-          // 我这边引起的；都不是，才是外部把触摸抢走。
-          this.cancelCtx.push({
-            r: this.lastResizeAt ? Math.round(now - this.lastResizeAt) : -1,
-            f: document.hasFocus() ? 1 : 0,
-            v: document.visibilityState === 'visible' ? 1 : 0,
-            n: e.touches ? e.touches.length : -1,
-          });
-          if (this.cancelCtx.length > 40) this.cancelCtx.shift();
-        }
-        this.raw[k]++;
-        this.lastRawAt = now;
-        this.rawLastType = k;
-        if (e.touches) {
-          this.fingersAtLast = e.touches.length;
-          if (e.touches.length > this.maxFingers) this.maxFingers = e.touches.length;
-        }
-        this.rawTimes[this.rawN % 256] = now;
-        this.rawN++;
-      };
-      for (const [type, key] of [['touchstart', 'ts'], ['touchmove', 'tm'],
-                                 ['touchend', 'te'], ['touchcancel', 'tc'],
-                                 ['pointerdown', 'pd']]) {
-        window.addEventListener(type, count(key), { capture: true, passive: true });
-      }
-
       // 监听整个游戏层而不是 canvas：即使某一下点到了 canvas 以外的位置也不会丢
       const root = this.canvas.parentElement || this.canvas;
       const skip = (e) => {
@@ -275,7 +184,7 @@
          preventDefault 原本挡的滚动、缩放、长按菜单，已分别由 touch-action:none、
          user-scalable=no、user-select/touch-callout:none 挡掉，这里不需要再挡。 */
       root.addEventListener('touchstart', (e) => {
-        if (skip(e)) { this.raw.skipped++; return; }
+        if (skip(e)) return;
         this.lastTouchAt = performance.now();
         // 原生壳在转发触摸：DOM 这一路让位。但如果原生事件迟迟不来，
         // 说明那条通道坏了，立刻退回 DOM，别让整个游戏点不动。
@@ -366,7 +275,6 @@
       const mapped = ts + this.clockDelta;
       if (Math.abs(mapped - now) > 1000) {
         // 时间戳基准跳变（换算结果离当下太远），重新锚定并本次退回系统时钟
-        this.tsAnomalies++;
         this.clockDelta = delta;
         return now;
       }
@@ -379,19 +287,8 @@
       // 无轨要 y 坐标。旧壳（RhythmLabShell/4 之前）只转发 x，这里直接不接管，
       // 让 DOM 那一路照常跑 —— 总比拿不到 y 判不了要好。
       if (this.free && (cssY === undefined || cssY === null || !isFinite(cssY))) return;
-      this.nativeSeen++;
       this.lastNativeAt = performance.now();
       this.nativeMode = true;
-      /* 原生壳走的是 MotionEvent 直采，不经过 DOM 事件，单独并入断流统计 */
-      if (this.lastRawAt && this.state === 'playing' && this.lastNativeAt - this.lastRawAt > 700) {
-        this.rawGaps.push([Math.round(this.chartTime(this.lastNativeAt) * 1000),
-                           Math.round(this.lastNativeAt - this.lastRawAt),
-                           this.rawLastType, this.fingersAtLast]);
-        if (this.rawGaps.length > 40) this.rawGaps.shift();
-      }
-      this.lastRawAt = this.lastNativeAt;
-      this.rawTimes[this.rawN % 256] = this.lastNativeAt;
-      this.rawN++;
       const ts = this.lastNativeAt - (+ageMs || 0);
       const key = 'n' + id;
       if (type === 'u') { this.touches.delete(key); return; }
@@ -462,30 +359,11 @@
       for (const e of this.errors) e.t0 = -1;
       this.lanePress.fill(0);
       this.touches.clear();
-      this.taps = 0; this.emptyTaps = 0; this.assistHits = 0;
-      this.tsAnomalies = 0; this.stateDrops = 0; this.lastDt = null;
+      this.lastDt = null;
       this.lastTapAt = 0; this.lastTapX = 0; this.lastTapY = 0;
       this.offSum = 0; this.offCount = 0;
-      // 输入日志用定长数组做环形缓冲：原来每次击打 push 一个新数组，
-      // 狂按时是一笔持续的垃圾来源
-      this.logCap = 400;
-      this.logT = new Float64Array(this.logCap);
-      this.logLane = new Int8Array(this.logCap);
-      this.logDt = new Float32Array(this.logCap);
-      this.logN = 0;
-      // 卡顿统计：安卓在应用无响应期间会直接丢掉排队的触摸，
-      // 表现就是「一段完全点不上、面板数字也不动」。这里把每一次长帧记下来。
-      this.stalls = []; this.lastFrameAt = 0; this.maxGap = 0;
+      this.stalls = 0; this.lastFrameAt = 0;
       this.autoDprCap = 0;        // 连续卡顿时自动压低渲染分辨率
-      this.presentStalls = []; this.maxRafLag = 0;
-      this.lastPhase = { sched: 0, logic: 0, draw: 0 };
-      this.lastFrameDur = 0; this.maxFrameDur = 0; this.maxOutside = 0;
-      // 帧间隔分桶：<20 / 20-40 / 40-80 / 80-160 / >160 ms
-      this.frameHist = new Int32Array(5);
-      // 连续掉帧追踪：连着多少帧、多少毫秒低于 25fps。
-      // 「卡三秒」到底是一帧卡三秒，还是几十帧接连卡，看这个。
-      this.slowRun = 0; this.slowRunMs = 0;
-      this.worstRunMs = 0; this.worstRunFrames = 0;
       this.bpmIdx = 0;
       this.currentBpm = chart.measureBpm ? chart.measureBpm[0] : chart.bpm;
       this.bpmFlashAt = -1;
@@ -603,18 +481,8 @@
       this.schedBeat = -this.countInBeats;
       this.state = 'countin';
       cancelAnimationFrame(this.raf);
-      const loop = (rafTs) => {
+      const loop = () => {
         this.raf = requestAnimationFrame(loop);
-        // rafTs 是这一帧的 vsync 时刻。正常情况下回调紧随其后（几毫秒内）；
-        // 若显示/合成层卡住而 JS 照常跑，这个滞后会明显变大。
-        if (rafTs) {
-          const lag = performance.now() - rafTs;
-          if (lag > this.maxRafLag) this.maxRafLag = lag;
-          if (lag > 120) {
-            this.presentStalls.push([Math.round(this.chartTime(performance.now()) * 1000), Math.round(lag)]);
-            if (this.presentStalls.length > 60) this.presentStalls.shift();
-          }
-        }
         this._frame();
       };
       this.raf = requestAnimationFrame(loop);
@@ -683,46 +551,24 @@
     get approachSec() { return (BASE_APPROACH_MS / Math.max(0.1, this.settings.speed || 1)) / 1000; }
 
     inputLane(lane, ts, frac) {
-      if (this.state !== 'playing' && this.state !== 'countin') {
-        // 暂停 / 恢复倒数期间收到的输入，单独记一笔，便于区分「没收到」和「收到但被丢」
-        if (this.state === 'paused' || this.state === 'resuming') this.stateDrops++;
-        return;
-      }
+      if (this.state !== 'playing' && this.state !== 'countin') return;
       if (!this.chart) return;
-      this.taps++;
       this.lanePress[lane] = performance.now();
-      const ct = this._tInput(ts);
-      this._judgeInput(lane, ct, frac);
-      // 记一笔：谁、什么时候、落在哪、判成什么
-      const li = this.logN % this.logCap;
-      this.logT[li] = ct * 1000;
-      this.logLane[li] = lane;
-      this.logDt[li] = this.lastDt === null ? NaN : this.lastDt;
-      this.logN++;
+      this._judgeInput(lane, this._tInput(ts), frac);
     }
 
     /* ---------- 无轨：按落点判定 ---------- */
     /* 点到哪个按键就打哪个。同一个位置上可能叠着好几个不同时刻的按键，
        所以先按「离判定时刻多近」排，再按「离落点多近」排。 */
     inputPoint(clientX, clientY, ts) {
-      if (this.state !== 'playing' && this.state !== 'countin') {
-        if (this.state === 'paused' || this.state === 'resuming') this.stateDrops++;
-        return;
-      }
+      if (this.state !== 'playing' && this.state !== 'countin') return;
       if (!this.chart) return;
-      this.taps++;
       const r = this._rect();
       const nx = (clientX - r.left - this.freeX0) / this.freeW;
       const ny = (clientY - r.top - this.freeY0) / this.freeH;
       this.lastTapX = clientX - r.left; this.lastTapY = clientY - r.top;
       this.lastTapAt = performance.now();
-      const ct = this._tInput(ts);
-      this._judgePoint(nx, ny, ct);
-      const li = this.logN % this.logCap;
-      this.logT[li] = ct * 1000;
-      this.logLane[li] = 0;
-      this.logDt[li] = this.lastDt === null ? NaN : this.lastDt;
-      this.logN++;
+      this._judgePoint(nx, ny, this._tInput(ts));
     }
 
     _findNoteAt(nx, ny, t) {
@@ -752,7 +598,6 @@
       const best = this._findNoteAt(nx, ny, t);
       if (this.settings.hitSound) this.audio.play('hit', 0);
       if (best < 0) {
-        this.emptyTaps++;
         this.lastDt = null;
         if (this.settings.missOnEmpty && this.state === 'playing') {
           this.emptyMiss++; this.combo = 0; this._showJudge(2, 0);
@@ -781,7 +626,6 @@
 
     _judgeInput(lane, t, frac) {
       let best = this._findNote(lane, t);
-      let assisted = false;
       // 只在落点确实贴着轨道边线、且本轨在判定窗口里没有音符可打时，才让一点余量给隔壁轨。
       // 余量按像素算（默认 12px），不是整条相邻轨，所以不会出现「乱点都能中」。
       const slack = Math.max(0, +this.settings.laneSlackPx || 0);
@@ -790,12 +634,11 @@
         const nb = frac <= tol ? lane - 1 : (frac >= 1 - tol ? lane + 1 : -1);
         if (nb >= 0 && nb < this.keys) {
           const alt = this._findNote(nb, t);
-          if (alt >= 0) { best = alt; assisted = true; lane = nb; this.lanePress[nb] = performance.now(); }
+          if (alt >= 0) { best = alt; lane = nb; this.lanePress[nb] = performance.now(); }
         }
       }
       if (this.settings.hitSound) this.audio.play('hit', 0);
       if (best < 0) {
-        this.emptyTaps++;
         this.lastDt = null;
         if (this.settings.missOnEmpty && this.state === 'playing') {
           this.emptyMiss++;
@@ -804,7 +647,6 @@
         }
         return;
       }
-      if (assisted) this.assistHits++;
       const dtMs = (t - this.chart.notes[best].t) * 1000;
       this.lastDt = dtMs;
       this.offSum += dtMs; this.offCount++;
@@ -837,30 +679,15 @@
     /* ---------- 每帧 ---------- */
     _frame() {
       const perfNow = performance.now();
-      // 一帧的开销拆成四块：音频排期 / 判定逻辑 / 绘制 / 我的代码之外。
-      // 「之外」= 两帧起点间隔 - 上一帧在我代码里花的时间，也就是浏览器自己
-      // 干的活（GC、布局、合成、输入派发、跨线程同步）。卡顿到底赖谁，看这一项。
+      // 长帧要盯着：安卓在主线程卡住期间会直接丢掉排队的触摸，
+      // 于是「画面顿一下」和「一段完全点不上」是同一件事。连着卡三次就自动降一档
+      // 渲染分辨率——掉帧比画质糙要命得多。逐级降到 1.0，每档至少隔 2 秒，
+      // 免得一串卡顿里一口气降到底。
       if (this.lastFrameAt) {
         const gap = perfNow - this.lastFrameAt;
-        if (gap > this.maxGap) this.maxGap = gap;
-        this.frameHist[gap < 20 ? 0 : gap < 40 ? 1 : gap < 80 ? 2 : gap < 160 ? 3 : 4]++;
-        if (gap > 40) {                       // 低于 25fps 就算这一帧「慢」
-          this.slowRun++; this.slowRunMs += gap;
-          if (this.slowRunMs > this.worstRunMs) {
-            this.worstRunMs = this.slowRunMs; this.worstRunFrames = this.slowRun;
-          }
-        } else { this.slowRun = 0; this.slowRunMs = 0; }
         if (gap > 120) {
-          const outside = Math.max(0, gap - (this.lastFrameDur || 0));
-          this.stalls.push([Math.round(this.chartTime(perfNow) * 1000), Math.round(gap),
-                            Math.round(outside), Math.round(this.lastPhase.sched),
-                            Math.round(this.lastPhase.logic), Math.round(this.lastPhase.draw)]);
-          if (this.stalls.length > 120) this.stalls.shift();
-          if (outside > this.maxOutside) this.maxOutside = outside;
-          // 连着卡三次就自动降一档渲染分辨率：掉帧比画质糙更要命，
-          // 卡顿期间安卓会把排队的触摸直接丢掉。
-          // 允许逐级往下降，直到 1.0；每降一档至少间隔 2 秒，避免一串卡顿里连降到底
-          if (this.stalls.length >= 3 && this.dpr > 1.0
+          this.stalls++;
+          if (this.stalls >= 3 && this.dpr > 1.0
               && perfNow - (this.lastDprDropAt || 0) > 2000) {
             this.autoDprCap = Math.max(1, (this.autoDprCap || this.dpr) - 0.5);
             this.lastDprDropAt = perfNow;
@@ -869,20 +696,17 @@
         }
       }
       this.lastFrameAt = perfNow;
-      const fStart = perfNow;
 
       if (this.state === 'resuming') {
         if (perfNow >= this.resumeAt) this._doResume();
-        else { this._draw(this.chartTime(this.pausedPerf), perfNow); this._endFrame(fStart); return; }
+        else { this._draw(this.chartTime(this.pausedPerf), perfNow); return; }
       }
-      if (this.state === 'paused') { this._draw(this.chartTime(this.pausedPerf), perfNow); this._endFrame(fStart); return; }
+      if (this.state === 'paused') { this._draw(this.chartTime(this.pausedPerf), perfNow); return; }
       const now = this.chartTime(perfNow);
       if (this.state === 'countin' && now >= 0) this.state = 'playing';
 
-      const t1 = performance.now();
       this._scheduleAudio(now);
       this._scheduleBgm(now);
-      const t2 = performance.now();
 
       const notes = this.chart.notes, n = notes.length, st = this.status;
       while (this.nextIdx < n && st[this.nextIdx] !== 0) this.nextIdx++;
@@ -906,22 +730,9 @@
         const bpm = this.chart.measureBpm[this.bpmIdx];
         if (bpm !== this.currentBpm) { this.currentBpm = bpm; this.bpmFlashAt = perfNow; }
       }
-      const t3 = performance.now();
       this._draw(now, perfNow);
-      const t4 = performance.now();
-
-      this.lastPhase.sched = t2 - t1;
-      this.lastPhase.logic = t3 - t2;
-      this.lastPhase.draw = t4 - t3;
-      this.lastFrameDur = t4 - fStart;
-      if (this.lastFrameDur > this.maxFrameDur) this.maxFrameDur = this.lastFrameDur;
 
       if (this.state === 'playing' && now > this.chart.duration + 1.2) this._finish();
-    }
-
-    _endFrame(fStart) {
-      this.lastFrameDur = performance.now() - fStart;
-      this.lastPhase.sched = 0; this.lastPhase.logic = 0; this.lastPhase.draw = this.lastFrameDur;
     }
 
     _scheduleAudio(now) {
@@ -946,9 +757,6 @@
 
     _finish() {
       cancelAnimationFrame(this.raf);
-      // 退出全屏会让视口变化并重算轨道，事后再读就不是本局的值了
-      this.layoutSnap = { w: Math.round(this.W), laneW: Math.round(this.laneW),
-                          x0: Math.round(this.laneX0), gesture: this.edgeGestureCss };
       this.state = 'finished';
       if (this.onFinish) this.onFinish(this.results());
     }
@@ -976,25 +784,6 @@
         meanOffset: mean,
         stdOffset: cnt ? Math.sqrt(v / cnt) : 0,
         early, late,
-        taps: this.taps, emptyTaps: this.emptyTaps, assistHits: this.assistHits,
-        tsAnomalies: this.tsAnomalies, stateDrops: this.stateDrops,
-        nativeMode: this.nativeMode, nativeSeen: this.nativeSeen,
-        clockDelta: this.clockDelta,
-        blackouts: this.blackouts(1200, 5),
-        stalls: this.stalls.slice(-40), maxGap: Math.round(this.maxGap),
-        inputGaps: this.inputGaps(700).slice(-20), lowLatency: this.lowLatency,
-        presentStalls: this.presentStalls.slice(-20), maxRafLag: Math.round(this.maxRafLag),
-        resizeCount: this.resizeCount || 0, canvasAllocs: this.canvasAllocs || 0,
-        maxFrameDur: Math.round(this.maxFrameDur), maxOutside: Math.round(this.maxOutside),
-        frameHist: Array.from(this.frameHist),
-        raw: Object.assign({}, this.raw), rawGaps: this.rawGaps.slice(-20),
-        maxFingers: this.maxFingers, cancelSpots: this.cancelSpots.slice(-20),
-        vvEvents: this.vvEvents, vvScaleMax: this.vvScaleMax,
-        fsChanges: this.fsChanges, cancelNearFs: this.cancelNearFs,
-        layout: this.layoutSnap || null,
-        cancelCtx: this.cancelCtx.slice(-20),
-        worstRunMs: Math.round(this.worstRunMs), worstRunFrames: this.worstRunFrames,
-        dpr: this.dpr, autoDprCap: this.autoDprCap,
         suggestOffset: this.offCount >= 12
           ? Math.round(this.settings.offsetMs + this.offSum / this.offCount) : null,
         autoplay: !!this.settings.autoplay,
@@ -1002,69 +791,6 @@
         segments: this._segmentStats(),
         chart: this.chart,
       };
-    }
-
-    /* 最近 1 秒收到多少个原始触摸事件。数字掉到 0 就是事件没进来，与判定无关 */
-    _rawRate(perfNow) {
-      let c = 0;
-      const n = Math.min(this.rawN, 256);
-      for (let k = 1; k <= n; k++) {
-        if (perfNow - this.rawTimes[(this.rawN - k) % 256] > 1000) break;
-        c++;
-      }
-      return c;
-    }
-
-    /* 最近 ms 毫秒内的触摸与命中，断触发生时一眼能看见 */
-    _recentInput(ms) {
-      const nowCt = this.chartTime(performance.now()) * 1000;
-      let taps = 0, hits = 0;
-      const n = Math.min(this.logN, this.logCap);
-      for (let k = 1; k <= n; k++) {
-        const i = (this.logN - k) % this.logCap;
-        if (nowCt - this.logT[i] > ms) break;
-        taps++;
-        if (!isNaN(this.logDt[i])) hits++;
-      }
-      return { taps, hits };
-    }
-
-    /* 找「本来在连续敲，中间却一条输入都没收到」的空档。
-       这一项和卡顿统计一起看：卡顿为 0 却有输入空档，说明触摸是在页面之外被丢掉的。 */
-    inputGaps(minMs) {
-      const out = [];
-      const n = Math.min(this.logN, this.logCap);
-      for (let k = n - 1; k >= 1; k--) {
-        const i = (this.logN - 1 - k) % this.logCap;
-        const j = (this.logN - k) % this.logCap;
-        const gap = this.logT[j] - this.logT[i];
-        if (gap >= minMs) out.push({ at: Math.round(this.logT[i]), ms: Math.round(gap) });
-      }
-      return out;
-    }
-
-    /* 从输入日志里找「有触摸但连续一段完全没中」的区间，用来抓断触 */
-    blackouts(minMs, minTaps) {
-      const out = [];
-      let start = null, count = 0, lastT = 0;
-      const n = Math.min(this.logN, this.logCap);
-      for (let k = n; k >= 1; k--) {
-        const i = (this.logN - k) % this.logCap;
-        const e = [this.logT[i], this.logLane[i], isNaN(this.logDt[i]) ? null : this.logDt[i]];
-        if (e[2] === null) {                       // 这一下打空
-          if (start === null) start = e[0];
-          count++; lastT = e[0];
-        } else {
-          if (start !== null && lastT - start >= minMs && count >= minTaps) {
-            out.push({ at: start, ms: lastT - start, taps: count });
-          }
-          start = null; count = 0;
-        }
-      }
-      if (start !== null && lastT - start >= minMs && count >= minTaps) {
-        out.push({ at: start, ms: lastT - start, taps: count });
-      }
-      return out;
     }
 
     /* 按 BPM 分段统计准确率：挑战模式用来看在哪一档开始崩 */
@@ -1348,54 +1074,6 @@
         }
       }
 
-      if (this.settings.inputDebug) {
-        const hits = this.counts[0] + this.counts[1];
-        const recent = this._recentInput(3000);
-        const lines = [
-          `触摸/按键 ${this.taps}   命中 ${hits}   打空 ${this.emptyTaps}`
-            + (this.settings.autoplay ? '   [自动演奏]' : ''),
-          `按住中 ${this.touches.size}   边缘救回 ${this.assistHits}   暂停期丢弃 ${this.stateDrops}`,
-          `输入通道 ${this.nativeMode ? '原生直采 (' + this.nativeSeen + ')' : '浏览器 DOM'}`
-            + (this.clockDelta === null ? '' : `   时钟偏移 ${this.clockDelta.toFixed(0)}ms`),
-          `近 3 秒 触摸 ${recent.taps} 命中 ${recent.hits}`
-            + (recent.taps >= 4 && recent.hits === 0 ? '   ← 连续打空！' : ''),
-          `距上次输入 ${this.logN ? Math.round(this.chartTime(perfNow) * 1000 - this.logT[(this.logN - 1) % this.logCap]) : '-'}ms`,
-          `卡顿 ${this.stalls.length} 次   最长帧 ${Math.round(this.maxGap)}ms`
-            + `   显示滞后 ${Math.round(this.maxRafLag)}ms`,
-          `视口变化 ${this.resizeCount || 0} 次   画布重建 ${this.canvasAllocs || 0} 次`,
-          `本帧 绘制${this.lastPhase.draw.toFixed(1)} 音频${this.lastPhase.sched.toFixed(1)} 逻辑${this.lastPhase.logic.toFixed(1)}ms`,
-          `最长: 我的代码 ${Math.round(this.maxFrameDur)}ms   代码之外 ${Math.round(this.maxOutside)}ms`,
-          `原始事件 按下${this.raw.ts} 抬起${this.raw.te} 取消${this.raw.tc}`
-            + `   最多同时${this.maxFingers}指`,
-          `原生通道 ${this.nativeMode ? this.nativeSeen : '未启用'}`
-            + (this.rawGaps.length
-              ? `   末次断流 ${this.rawGaps[this.rawGaps.length - 1][1]}ms`
-                + `(${RAW_NAME[this.rawGaps[this.rawGaps.length - 1][2]] || '?'}后,`
-                + `${this.rawGaps[this.rawGaps.length - 1][3]}指)`
-              : ''),
-          `原始速率 ${this._rawRate(perfNow)}/秒`
-            + `   距上次 ${this.lastRawAt ? Math.round(perfNow - this.lastRawAt) : '-'}ms`
-            + (this.lastRawAt && perfNow - this.lastRawAt > 500 ? '  ← 事件断流！' : ''),
-          `连续掉帧最长 ${(this.worstRunMs / 1000).toFixed(1)}s / ${this.worstRunFrames} 帧`
-            + `   帧分布 ${this.frameHist[0]}/${this.frameHist[1]}/${this.frameHist[2]}/${this.frameHist[3]}/${this.frameHist[4]}`
-            + `   渲染 ${this.dpr.toFixed(2)}x` + (this.autoDprCap ? '(已自动降档)' : ''),
-          `上次偏差 ${this.lastDt === null ? '打空' : (this.lastDt > 0 ? '+' : '') + this.lastDt.toFixed(0) + 'ms'}`
-            + (this.offCount ? `   平均 ${(this.offSum / this.offCount > 0 ? '+' : '')}${(this.offSum / this.offCount).toFixed(0)}ms` : '')
-            + (this.tsAnomalies ? `   时间戳异常 ${this.tsAnomalies}` : ''),
-        ];
-        g.textAlign = 'left'; g.textBaseline = 'top';
-        g.font = '500 11px ui-monospace, Menlo, Consolas, monospace';
-        for (let i = 0; i < lines.length; i++) {
-          const w2 = g.measureText(lines[i]).width + 10;
-          g.fillStyle = 'rgba(0,0,0,0.55)';
-          g.fillRect(10, 56 + i * 15, w2, 14);
-          // 自动演奏本来就没有输入，不该标红
-          const suspect = !this.settings.autoplay && this.taps < hits;
-          g.fillStyle = suspect ? '#ff5c7a' : 'rgba(255,255,255,0.8)';
-          g.fillText(lines[i], 15, 58 + i * 15);
-        }
-      }
-
       if (this.settings.showErrorBar) {
         const bw = Math.min(240, W * 0.6), bx = (W - bw) / 2, by = H - 26;
         g.fillStyle = 'rgba(94,232,176,0.4)'; g.fillRect(bx, by - 3, bw, 6);
@@ -1446,39 +1124,18 @@
       return c;
     }
 
-    /* 两个渐变只在尺寸/判定线变化时重建 */
-    _pressGrad(judgeY) {
-      const c = this._gradCache;
-      if (c && c.y === judgeY) return c.press;
-      this._buildGrads(judgeY);
-      return this._gradCache.press;
-    }
+    /* 判定线的渐变只在尺寸 / 判定线高度变化时重建：
+       原来每帧新建，7K 下每秒要产生几百个渐变对象。 */
     _lineGrad(judgeY) {
       const c = this._gradCache;
       if (c && c.y === judgeY) return c.line;
-      this._buildGrads(judgeY);
-      return this._gradCache.line;
-    }
-    _buildGrads(judgeY) {
       const g = this.ctx2d;
-      const press = g.createLinearGradient(0, judgeY - 240, 0, judgeY);
-      press.addColorStop(0, 'rgba(140,185,255,0)');
-      press.addColorStop(1, 'rgba(140,185,255,0.55)');
       const line = g.createLinearGradient(0, judgeY - 3, 0, judgeY + 3);
       line.addColorStop(0, 'rgba(120,160,255,0)');
       line.addColorStop(0.5, 'rgba(160,190,255,0.9)');
       line.addColorStop(1, 'rgba(120,160,255,0)');
-      this._gradCache = { y: judgeY, press, line };
-    }
-
-    _roundRect(g, x, y, w, h, r) {
-      g.beginPath();
-      g.moveTo(x + r, y);
-      g.arcTo(x + w, y, x + w, y + h, r);
-      g.arcTo(x + w, y + h, x, y + h, r);
-      g.arcTo(x, y + h, x, y, r);
-      g.arcTo(x, y, x + w, y, r);
-      g.closePath();
+      this._gradCache = { y: judgeY, line };
+      return line;
     }
   }
 
